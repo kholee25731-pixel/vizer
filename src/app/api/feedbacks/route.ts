@@ -80,12 +80,13 @@ export async function POST(request: Request) {
       project_id,
       content,
       image_url: image_url || "",
-      ai_background: ai.background,
-      ai_typography: ai.typography,
-      ai_copywriting: ai.copywriting,
-      ai_layout: ai.layout,
-      ai_key_visual: ai.key_visual,
-      ai_summary: ai.summary,
+      description: description || null,
+      ai_background: ai?.background ?? null,
+      ai_typography: ai?.typography ?? null,
+      ai_copywriting: ai?.copywriting ?? null,
+      ai_layout: ai?.layout ?? null,
+      ai_key_visual: ai?.key_visual ?? null,
+      ai_summary: ai?.summary ?? null,
     });
 
     if (!result.ok) {

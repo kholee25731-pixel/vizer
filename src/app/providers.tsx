@@ -79,6 +79,12 @@ export type CreativeOutput = {
   deletedAt?: string;
 };
 
+export type AiSimilarPastCase = {
+  description: string;
+  result: OutputStatus;
+  reason: string;
+};
+
 export type AiFeedbackHistoryEntry = {
   id: string;
   projectId: string;
@@ -91,6 +97,10 @@ export type AiFeedbackHistoryEntry = {
   status: OutputStatus;
   approvalProbability: number;
   createdAt: string;
+  /** `/api/ai/evaluate`: low ≤33 · mid 34–66 · high ≥67 */
+  prediction?: "low" | "mid" | "high";
+  risks?: string[];
+  similarCases?: AiSimilarPastCase[];
 };
 
 type StoreState = {

@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { CustomDropdown } from "../../components/CustomDropdown";
-import { type AiFeedbackHistoryEntry, useStore } from "../providers";
+import {
+  type AiFeedbackHistoryEntry,
+  type AiSimilarPastCase,
+  useStore,
+} from "../providers";
 
 /** AI 피드백 설명(본문) — 분석 패널과 히스토리 카드에서 동일 문구 사용 */
 const AI_FEEDBACK_EXPLANATION_PARAGRAPHS = [
@@ -26,28 +30,27 @@ const AI_FEEDBACK_EXPLANATION_PARAGRAPHS = [
   "다만 텍스트 밀도가 높은 영역이 있어 가독성이 일부 떨어질 수 있습니다.",
 ] as const;
 
+const MIN_FEEDBACK_FOR_AI = 20;
+
 function historyExplanationText(entry: AiFeedbackHistoryEntry): string {
   const t = entry.aiExplanation?.trim();
   if (t) return t;
   return AI_FEEDBACK_EXPLANATION_PARAGRAPHS.join(" ");
 }
 
-/** 0~1 확률 → 구간: ≤33% 거절톤, 33~66% 주의, ≥66% 승인톤 */
+/** 점수 0–100 환산: ≤33 low, 34–66 mid, ≥67 high */
 function approvalProbabilityTier(
   p: number,
 ): "low" | "mid" | "high" {
-  const pct = p * 100;
+  const pct = Math.round(p * 100);
   if (pct <= 33) return "low";
-  if (pct < 66) return "mid";
+  if (pct <= 66) return "mid";
   return "high";
 }
 
-type PredictionLevel = "high" | "medium" | "risk";
-
-function levelFromProbability(p: number): PredictionLevel {
-  if (p >= 0.7) return "high";
-  if (p >= 0.45) return "medium";
-  return "risk";
+function historyTier(entry: AiFeedbackHistoryEntry): "low" | "mid" | "high" {
+  if (entry.prediction) return entry.prediction;
+  return approvalProbabilityTier(entry.approvalProbability);
 }
 
 export default function AiFeedbackPage() {
@@ -64,6 +67,16 @@ export default function AiFeedbackPage() {
       activeProjects.find((p) => p.id === selectedProjectId)?.name ?? ""
     );
   }, [activeProjects, selectedProjectId]);
+
+  const feedbackCount = useMemo(() => {
+    if (!selectedProjectId) return 0;
+    return (state.outputs ?? []).filter(
+      (o) => o.projectId === selectedProjectId && !o.deleted,
+    ).length;
+  }, [state.outputs, selectedProjectId]);
+
+  const isLocked = feedbackCount < MIN_FEEDBACK_FOR_AI;
+
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const selectedFileName = selectedFile?.name ?? null;
@@ -106,6 +119,15 @@ export default function AiFeedbackPage() {
       setFeedbackError("프로젝트를 선택해주세요.");
       return;
     }
+    const countForProject = (state.outputs ?? []).filter(
+      (o) => o.projectId === selectedProjectId && !o.deleted,
+    ).length;
+    if (countForProject < MIN_FEEDBACK_FOR_AI) {
+      setFeedbackError(
+        `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`,
+      );
+      return;
+    }
     const desc = designDescription.trim();
     const imageUrl = preview?.trim() ?? "";
     if (!desc && !imageUrl) {
@@ -126,7 +148,7 @@ export default function AiFeedbackPage() {
     setLatestSessionFeedback(null);
 
     try {
-      const res = await fetch("/api/ai/feedback", {
+      const res = await fetch("/api/ai/evaluate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -141,37 +163,89 @@ export default function AiFeedbackPage() {
 
       const data: unknown = await res.json().catch(() => ({}));
       const rec = data as {
-        content?: unknown;
-        id?: unknown;
-        created_at?: unknown;
+        approval_score?: unknown;
+        prediction?: unknown;
+        reasoning?: unknown;
+        risks?: unknown;
+        similar_cases?: unknown;
         error?: unknown;
+        message?: unknown;
         detail?: unknown;
+        current?: unknown;
       };
 
       if (!res.ok) {
-        const msg =
-          typeof rec.error === "string" ? rec.error : "요청에 실패했습니다.";
+        const friendly =
+          typeof rec.message === "string" && rec.message.trim() !== ""
+            ? rec.message
+            : typeof rec.error === "string"
+              ? rec.error
+              : "요청에 실패했습니다.";
         const detail =
           typeof rec.detail === "string" ? ` (${rec.detail})` : "";
-        setFeedbackError(msg + detail);
+        const currentHint =
+          typeof rec.current === "number" && rec.error === "NOT_ENOUGH_DATA"
+            ? ` (현재 ${rec.current}개)`
+            : "";
+        setFeedbackError(friendly + currentHint + detail);
         setFeedbackRequested(false);
         return;
       }
 
-      const content = typeof rec.content === "string" ? rec.content : "";
-      const id = typeof rec.id === "string" ? rec.id : "";
-      const createdAt =
-        typeof rec.created_at === "string"
-          ? rec.created_at
-          : new Date().toISOString();
-      if (!content || !id) {
+      const reasoning =
+        typeof rec.reasoning === "string" ? rec.reasoning.trim() : "";
+      const scoreRaw = Number(rec.approval_score);
+      const predRaw = rec.prediction;
+      const prediction =
+        predRaw === "low" || predRaw === "mid" || predRaw === "high"
+          ? predRaw
+          : undefined;
+      if (!reasoning || Number.isNaN(scoreRaw)) {
         setFeedbackError("응답 형식이 올바르지 않습니다.");
         setFeedbackRequested(false);
         return;
       }
 
+      /* API: approval_score 0–100 → UI approvalProbability = score/100 */
+      const approvalProb = Math.min(
+        1,
+        Math.max(0, scoreRaw / 100),
+      );
+
+      const risks = Array.isArray(rec.risks)
+        ? rec.risks
+            .map((x) => String(x ?? "").trim())
+            .filter(Boolean)
+        : [];
+
+      const similarCases = Array.isArray(rec.similar_cases)
+        ? rec.similar_cases
+            .map((raw) => {
+              if (!raw || typeof raw !== "object") return null;
+              const o = raw as Record<string, unknown>;
+              const d = String(o.description ?? "").trim();
+              const r = String(o.reason ?? "").trim();
+              const res: AiSimilarPastCase["result"] =
+                o.result === "Rejected" ? "Rejected" : "Approved";
+              if (!d && !r) return null;
+              return {
+                description: d || "(설명 없음)",
+                result: res,
+                reason: r || "(사유 없음)",
+              } satisfies AiSimilarPastCase;
+            })
+            .filter((x): x is AiSimilarPastCase => x != null)
+            .slice(0, 3)
+        : [];
+
+      const createdAt = new Date().toISOString();
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `eval-${Date.now()}`;
+
       const summaryReason =
-        content.length > 140 ? `${content.slice(0, 137)}…` : content;
+        reasoning.length > 140 ? `${reasoning.slice(0, 137)}…` : reasoning;
       const entry: AiFeedbackHistoryEntry = {
         id,
         projectId: selectedProjectId,
@@ -180,10 +254,13 @@ export default function AiFeedbackPage() {
         description: desc,
         design_image_data_url: imageUrl || undefined,
         summaryReason,
-        aiExplanation: content,
-        status: "Approved",
-        approvalProbability: 0.55,
+        aiExplanation: reasoning /* API reasoning */,
+        status: approvalProb >= 0.5 ? "Approved" : "Rejected",
+        approvalProbability: approvalProb,
         createdAt,
+        prediction,
+        risks: risks.length ? risks : undefined,
+        similarCases: similarCases.length ? similarCases : undefined,
       };
       prependAiFeedbackHistory(entry);
       setLatestSessionFeedback(entry);
@@ -201,13 +278,19 @@ export default function AiFeedbackPage() {
     selectedFileName,
     selectedProjectId,
     selectedProjectName,
+    state.outputs,
   ]);
 
   const approvalProbability = latestSessionFeedback?.approvalProbability ?? 0.55;
-  const level = useMemo(
-    () => levelFromProbability(approvalProbability),
-    [approvalProbability],
-  );
+
+  /** API `prediction` 우선, 없으면 점수 구간으로 복원 */
+  const indicatorTier = useMemo((): "low" | "mid" | "high" => {
+    if (latestSessionFeedback?.prediction) {
+      return latestSessionFeedback.prediction;
+    }
+    return approvalProbabilityTier(approvalProbability);
+  }, [latestSessionFeedback?.prediction, approvalProbability]);
+
   const showAiPanels = feedbackRequested;
 
   const recentAiFeedback = useMemo(() => {
@@ -218,26 +301,26 @@ export default function AiFeedbackPage() {
   }, [state.aiFeedbackHistory]);
 
   const indicator = useMemo(() => {
-    if (level === "high") {
+    if (indicatorTier === "high") {
       return {
-        label: "승인 가능성: 높음",
+        label: "승인 가능성 높음",
         tone: "emerald",
         icon: CheckCircle2,
       } as const;
     }
-    if (level === "medium") {
+    if (indicatorTier === "mid") {
       return {
-        label: "승인 가능성: 보통",
+        label: "보통",
         tone: "amber",
         icon: AlertTriangle,
       } as const;
     }
     return {
-      label: "거절 위험: 높음",
+      label: "거절 위험",
       tone: "rose",
       icon: XCircle,
     } as const;
-  }, [level]);
+  }, [indicatorTier]);
 
   return (
     <div className="space-y-6">
@@ -380,14 +463,24 @@ export default function AiFeedbackPage() {
                 />
                 <button
                   type="button"
-                  disabled={feedbackLoading}
+                  disabled={feedbackLoading || isLocked}
                   aria-busy={feedbackLoading}
+                  title={
+                    isLocked
+                      ? `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`
+                      : undefined
+                  }
                   onClick={() => void requestAiFeedback()}
                   className="absolute bottom-[20px] right-[20px] z-10 inline-flex items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {feedbackLoading ? "분석 중…" : "피드백 요청 →"}
                 </button>
               </div>
+              {isLocked && selectedProjectId ? (
+                <p className="mt-2 text-xs font-medium text-amber-800">
+                  {`AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`}
+                </p>
+              ) : null}
               {feedbackError ? (
                 <p className="mt-2 text-xs font-medium text-rose-600">
                   {feedbackError}
@@ -409,7 +502,7 @@ export default function AiFeedbackPage() {
                 </h2>
                 <p className="mt-1 text-xs text-zinc-500">
                   {latestSessionFeedback
-                    ? "OpenAI(gpt-4o-mini) 응답 기반"
+                    ? "과거 승인·거절 사례만 근거로 예측 · gpt-4o-mini"
                     : feedbackLoading
                       ? "분석 중…"
                       : "프로젝트·시안을 보내 AI 피드백을 받습니다."}
@@ -417,7 +510,12 @@ export default function AiFeedbackPage() {
               </div>
               <button
                 type="button"
-                disabled={feedbackLoading}
+                disabled={feedbackLoading || isLocked}
+                title={
+                  isLocked
+                    ? `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`
+                    : undefined
+                }
                 onClick={() => void requestAiFeedback()}
                 className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -431,12 +529,22 @@ export default function AiFeedbackPage() {
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-                <p className="text-xs font-medium text-zinc-500">승인될 확률</p>
+                <p className="text-xs font-medium text-zinc-500">승인 점수</p>
                 <p className="mt-2 text-4xl font-semibold tracking-tight text-zinc-900">
                   {feedbackLoading && !latestSessionFeedback
                     ? "—"
-                    : `${Math.round(approvalProbability * 100)}%`}
+                    : `${Math.round(approvalProbability * 100)}점`}
                 </p>
+                {latestSessionFeedback?.prediction ? (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    예측 구간:{" "}
+                    {latestSessionFeedback.prediction === "high"
+                      ? "높음 (67–100)"
+                      : latestSessionFeedback.prediction === "mid"
+                        ? "중간 (34–66)"
+                        : "낮음 (0–33)"}
+                  </p>
+                ) : null}
               </div>
               <div
                 className={`rounded-xl border p-4 ${
@@ -479,7 +587,7 @@ export default function AiFeedbackPage() {
             </div>
           </section>
 
-          {/* SECTION 3 — AI Feedback Explanation */}
+          {/* SECTION 3 — reasoning (API) → aiExplanation */}
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-900">
               AI 피드백 설명
@@ -507,79 +615,70 @@ export default function AiFeedbackPage() {
             </div>
           </section>
 
-          {/* SECTION 4 — Risk Signals */}
+          {/* SECTION 4 — risks (API) */}
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-900">위험 신호</h2>
             <ul className="mt-3 space-y-2 text-sm text-zinc-800">
-              {[
-                "텍스트 가독성 문제 가능성",
-                "CTA 강조 부족",
-                "정보 밀도 과다",
-              ].map((t) => (
-                <li key={t} className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <span>{t}</span>
+              {feedbackLoading && !latestSessionFeedback ? (
+                <li className="text-zinc-500">분석 중…</li>
+              ) : latestSessionFeedback?.risks?.length ? (
+                latestSessionFeedback.risks.map((t) => (
+                  <li key={t} className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                    <span>{t}</span>
+                  </li>
+                ))
+              ) : (
+                <li className="flex items-center gap-2 text-zinc-500">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-zinc-400" />
+                  <span>명시된 위험 요소 없음</span>
                 </li>
-              ))}
+              )}
             </ul>
           </section>
 
-          {/* SECTION 5 — Similar Past Cases */}
+          {/* SECTION 5 — similar_cases (API) */}
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-semibold text-zinc-900">
-              유사 과거 사례
-            </h2>
+            <h2 className="text-sm font-semibold text-zinc-900">유사 사례</h2>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
-              {[
-                {
-                  id: 1,
-                  status: "Rejected" as const,
-                  reason: "레이아웃이 너무 복잡함",
-                  project: "수상한 스튜디오 리뉴얼",
-                },
-                {
-                  id: 2,
-                  status: "Approved" as const,
-                  reason: "CTA 버튼 강조",
-                  project: "26 재계약식_어나더 운동회",
-                },
-                {
-                  id: 3,
-                  status: "Approved" as const,
-                  reason: "정보 위계가 명확함",
-                  project: "26 코엑스_K-Edu",
-                },
-              ].map((c) => {
-                const approved = c.status === "Approved";
-                return (
-                  <article
-                    key={c.id}
-                    className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
-                  >
-                    <div className="flex h-28 items-center justify-center bg-zinc-100 text-[11px] font-medium text-zinc-500">
-                      썸네일
-                    </div>
-                    <div className="flex flex-1 flex-col gap-2 p-4">
-                      <span
-                        className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          approved
-                            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                            : "bg-rose-50 text-rose-800 ring-1 ring-rose-200"
-                        }`}
-                      >
-                        {approved ? "승인" : "거절"}
-                      </span>
-                      <p className="text-sm font-medium text-zinc-900">
-                        “{c.reason}”
-                      </p>
-                      <p className="text-xs text-zinc-500">프로젝트</p>
-                      <p className="text-xs font-medium text-zinc-800">
-                        {c.project}
-                      </p>
-                    </div>
-                  </article>
-                );
-              })}
+              {feedbackLoading && !latestSessionFeedback ? (
+                <p className="col-span-full text-sm text-zinc-500">분석 중…</p>
+              ) : latestSessionFeedback?.similarCases?.length ? (
+                latestSessionFeedback.similarCases.map((c, idx) => {
+                  const approved = c.result === "Approved";
+                  return (
+                    <article
+                      key={`${c.description}-${c.reason}-${idx}`}
+                      className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
+                    >
+                      <div className="flex min-h-[4.5rem] items-center border-b border-zinc-100 bg-zinc-50 px-4 py-3">
+                        <p className="line-clamp-3 text-xs leading-relaxed text-zinc-700">
+                          {c.description}
+                        </p>
+                      </div>
+                      <div className="flex flex-1 flex-col gap-2 p-4">
+                        <span
+                          className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            approved
+                              ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                              : "bg-rose-50 text-rose-800 ring-1 ring-rose-200"
+                          }`}
+                        >
+                          {approved ? "승인" : "거절"}
+                        </span>
+                        <p className="text-sm font-medium text-zinc-900">
+                          “{c.reason}”
+                        </p>
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <p className="col-span-full text-sm text-zinc-500">
+                  유사하게 매칭된 과거 사례가 없습니다. 피드백 아카이브에 사례를
+                  더 쌓으면 비교에 활용됩니다.
+                </p>
+              )}
             </div>
           </section>
         </>
@@ -592,7 +691,7 @@ export default function AiFeedbackPage() {
         {recentAiFeedback.length > 0 ? (
           <div className="space-y-3">
             {recentAiFeedback.map((item) => {
-              const tier = approvalProbabilityTier(item.approvalProbability);
+              const tier = historyTier(item);
               const pct = Math.round(item.approvalProbability * 100);
               const blockClass =
                 tier === "low"
@@ -648,7 +747,7 @@ export default function AiFeedbackPage() {
                               aria-hidden
                             />
                           )}
-                          <span>승인될 확률 {pct}%</span>
+                          <span>승인 점수 {pct}점</span>
                         </div>
                         <span className="min-w-0 truncate text-sm font-medium text-zinc-900">
                           {item.projectName}

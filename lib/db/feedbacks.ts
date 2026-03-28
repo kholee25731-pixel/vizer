@@ -10,6 +10,8 @@ export type InsertFeedbackFields = {
   project_id: string;
   content: string;
   image_url: string;
+  /** 시안 설명(평문). DB `description` 컬럼과 동기화 */
+  description?: string | null;
   ai_background?: string | null;
   ai_typography?: string | null;
   ai_copywriting?: string | null;
@@ -67,6 +69,7 @@ export async function insertFeedbackWithClient(
       project_id: payload.project_id,
       content: payload.content,
       image_url: payload.image_url ?? "",
+      description: payload.description ?? null,
       deleted: false,
       ai_background: payload.ai_background ?? null,
       ai_typography: payload.ai_typography ?? null,
