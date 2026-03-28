@@ -11,11 +11,17 @@ export async function insertProjectRow(payload: {
   | { ok: true; row: Record<string, unknown> }
   | { ok: false; message?: string }
 > {
+  const userId = String(payload.user_id ?? "").trim();
+  if (!userId) {
+    console.error("[projects] insert: user_id는 필수입니다.");
+    return { ok: false, message: "user_id는 필수입니다." };
+  }
+
   const { data, error } = await supabase
     .from("projects")
     .insert({
       name: payload.name,
-      user_id: payload.user_id,
+      user_id: userId,
       leader: payload.leader,
       category: payload.category,
       cycle: payload.cycle,

@@ -16,7 +16,8 @@ export async function insertProjectForCurrentUser(payload: {
     error: userError,
   } = await supabase.auth.getUser();
 
-  if (userError || !user) {
+  const uid = user?.id != null ? String(user.id).trim() : "";
+  if (userError || !uid) {
     console.warn("[projects] 로그인된 사용자 없음 — DB insert 생략");
     return { ok: false, reason: "not_authenticated" };
   }
@@ -25,7 +26,7 @@ export async function insertProjectForCurrentUser(payload: {
     .from("projects")
     .insert({
       name: payload.name,
-      user_id: user.id,
+      user_id: uid,
     })
     .select()
     .single();

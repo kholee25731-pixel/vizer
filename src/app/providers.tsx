@@ -455,9 +455,17 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       createProject: async (input) => {
         const {
           data: { user: authUser },
+          error: authErr,
         } = await supabase.auth.getUser();
-        if (!authUser) {
-          throw new Error("로그인이 필요합니다.");
+
+        const uid = authUser?.id != null ? String(authUser.id).trim() : "";
+        if (authErr || !uid) {
+          if (authErr) {
+            console.warn("[projects] auth.getUser 실패:", authErr.message);
+          }
+          throw new Error(
+            "로그인이 필요합니다. 프로젝트를 만들려면 다시 로그인해 주세요.",
+          );
         }
 
         const cycle: ProjectCycle =
@@ -469,7 +477,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
         const result = await insertProjectRow({
           name,
-          user_id: authUser.id,
+          user_id: uid,
           leader:
             (input.leader ?? "미선택") === "미선택"
               ? null
