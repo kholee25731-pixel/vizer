@@ -1,9 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CycleInfoModal } from "../../components/CycleInfoModal";
 import { CustomDropdown } from "../../components/CustomDropdown";
+import { LeadersManageModal } from "../../components/LeadersManageModal";
 import { ProjectTable } from "../../components/ProjectTable";
 import { WorkTypesManageModal } from "../../components/WorkTypesManageModal";
 import { CYCLES } from "../../constants/taxonomy";
@@ -19,7 +20,13 @@ function ProjectsPage() {
   const [cycle, setCycle] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [workTypesModalOpen, setWorkTypesModalOpen] = useState(false);
+  const [leadersModalOpen, setLeadersModalOpen] = useState(false);
   const [cycleInfoModalOpen, setCycleInfoModalOpen] = useState(false);
+
+  const leaderOptions = useMemo(
+    () => ["미선택", ...state.leaders.filter((l) => l !== "미선택")],
+    [state.leaders],
+  );
 
   const handleCreate = async () => {
     setError(null);
@@ -44,19 +51,23 @@ function ProjectsPage() {
       return;
     }
 
-    await createProject({
-      name: projectName,
-      description: nlDescription,
-      category: workType as ProjectCategory,
-      leader,
-      cycle: cycle as ProjectCycle,
-    });
+    try {
+      await createProject({
+        name: projectName,
+        description: nlDescription,
+        category: workType as ProjectCategory,
+        leader,
+        cycle: cycle as ProjectCycle,
+      });
 
-    setNlDescription("");
-    setProjectName("");
-    setLeader("");
-    setWorkType("");
-    setCycle("");
+      setNlDescription("");
+      setProjectName("");
+      setLeader("");
+      setWorkType("");
+      setCycle("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "프로젝트 생성에 실패했습니다.");
+    }
   };
 
   return (
@@ -78,11 +89,13 @@ function ProjectsPage() {
           />
           <div className="min-w-[7.5rem] flex-1">
             <CustomDropdown
-              options={state.leaders}
+              options={leaderOptions}
               value={leader}
               placeholder="메인 리더"
+              showEditButton
+              onEditClick={() => setLeadersModalOpen(true)}
               onChange={(v) => {
-                addLeader(v);
+                if (v !== "미선택") addLeader(v);
                 setLeader(v);
               }}
             />
@@ -118,6 +131,10 @@ function ProjectsPage() {
         <WorkTypesManageModal
           open={workTypesModalOpen}
           onClose={() => setWorkTypesModalOpen(false)}
+        />
+        <LeadersManageModal
+          open={leadersModalOpen}
+          onClose={() => setLeadersModalOpen(false)}
         />
         <CycleInfoModal
           open={cycleInfoModalOpen}

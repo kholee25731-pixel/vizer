@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import {
   AlertTriangle,
   RefreshCw,
@@ -9,6 +16,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import { CustomDropdown } from "../../components/CustomDropdown";
 import { type AiFeedbackHistoryEntry, useStore } from "../providers";
 
@@ -17,9 +25,6 @@ const AI_FEEDBACK_EXPLANATION_PARAGRAPHS = [
   "이 시안은 기존 승인된 디자인과 유사한 구조를 가지고 있습니다. CTA 버튼의 위치가 명확하며 정보 계층 구조가 잘 드러납니다.",
   "다만 텍스트 밀도가 높은 영역이 있어 가독성이 일부 떨어질 수 있습니다.",
 ] as const;
-
-const AI_FEEDBACK_EXPLANATION_FULL =
-  AI_FEEDBACK_EXPLANATION_PARAGRAPHS.join("\n\n");
 
 function historyExplanationText(entry: AiFeedbackHistoryEntry): string {
   const t = entry.aiExplanation?.trim();
@@ -45,14 +50,8 @@ function levelFromProbability(p: number): PredictionLevel {
   return "risk";
 }
 
-function predictionLabelFromProbability(p: number): string {
-  if (p >= 0.7) return "승인 가능성: 높음";
-  if (p >= 0.45) return "승인 가능성: 보통";
-  return "거절 위험: 높음";
-}
-
 export default function AiFeedbackPage() {
-  const { state, createProject, addAiFeedbackHistory } = useStore();
+  const { state, createProject, prependAiFeedbackHistory } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeProjects = useMemo(
     () => (state.projects ?? []).filter((p) => !p.deleted),
@@ -71,11 +70,17 @@ export default function AiFeedbackPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [designDescription, setDesignDescription] = useState("");
   const [feedbackRequested, setFeedbackRequested] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [latestSessionFeedback, setLatestSessionFeedback] =
+    useState<AiFeedbackHistoryEntry | null>(null);
 
   useEffect(() => {
-    if (!selectedFile) setFeedbackRequested(false);
-  }, [selectedFile]);
+    if (!selectedFile && !designDescription.trim()) {
+      setFeedbackRequested(false);
+      setLatestSessionFeedback(null);
+    }
+  }, [selectedFile, designDescription]);
 
   useEffect(() => {
     setFeedbackError(null);
@@ -95,14 +100,115 @@ export default function AiFeedbackPage() {
     reader.readAsDataURL(file);
   };
 
-  // Mock prediction result for now.
-  const approvalProbability = 0.72;
+  const requestAiFeedback = useCallback(async () => {
+    setFeedbackError(null);
+    if (!selectedProjectId) {
+      setFeedbackError("프로젝트를 선택해주세요.");
+      return;
+    }
+    const desc = designDescription.trim();
+    const imageUrl = preview?.trim() ?? "";
+    if (!desc && !imageUrl) {
+      setFeedbackError("시안 이미지를 올리거나 시안 설명을 입력해주세요.");
+      return;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setFeedbackError("로그인이 필요합니다.");
+      return;
+    }
+
+    setFeedbackRequested(true);
+    setFeedbackLoading(true);
+    setLatestSessionFeedback(null);
+
+    try {
+      const res = await fetch("/api/ai/feedback", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          description: desc,
+          image_url: imageUrl,
+        }),
+      });
+
+      const data: unknown = await res.json().catch(() => ({}));
+      const rec = data as {
+        content?: unknown;
+        id?: unknown;
+        created_at?: unknown;
+        error?: unknown;
+        detail?: unknown;
+      };
+
+      if (!res.ok) {
+        const msg =
+          typeof rec.error === "string" ? rec.error : "요청에 실패했습니다.";
+        const detail =
+          typeof rec.detail === "string" ? ` (${rec.detail})` : "";
+        setFeedbackError(msg + detail);
+        setFeedbackRequested(false);
+        return;
+      }
+
+      const content = typeof rec.content === "string" ? rec.content : "";
+      const id = typeof rec.id === "string" ? rec.id : "";
+      const createdAt =
+        typeof rec.created_at === "string"
+          ? rec.created_at
+          : new Date().toISOString();
+      if (!content || !id) {
+        setFeedbackError("응답 형식이 올바르지 않습니다.");
+        setFeedbackRequested(false);
+        return;
+      }
+
+      const summaryReason =
+        content.length > 140 ? `${content.slice(0, 137)}…` : content;
+      const entry: AiFeedbackHistoryEntry = {
+        id,
+        projectId: selectedProjectId,
+        projectName: selectedProjectName,
+        fileName: selectedFileName ?? "",
+        description: desc,
+        design_image_data_url: imageUrl || undefined,
+        summaryReason,
+        aiExplanation: content,
+        status: "Approved",
+        approvalProbability: 0.55,
+        createdAt,
+      };
+      prependAiFeedbackHistory(entry);
+      setLatestSessionFeedback(entry);
+    } catch (e) {
+      console.error(e);
+      setFeedbackError("네트워크 오류가 발생했습니다.");
+      setFeedbackRequested(false);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  }, [
+    designDescription,
+    prependAiFeedbackHistory,
+    preview,
+    selectedFileName,
+    selectedProjectId,
+    selectedProjectName,
+  ]);
+
+  const approvalProbability = latestSessionFeedback?.approvalProbability ?? 0.55;
   const level = useMemo(
     () => levelFromProbability(approvalProbability),
     [approvalProbability],
   );
-  const hasUpload = Boolean(selectedFileName);
-  const showAiPanels = hasUpload && feedbackRequested;
+  const showAiPanels = feedbackRequested;
 
   const recentAiFeedback = useMemo(() => {
     const all = state.aiFeedbackHistory ?? [];
@@ -246,13 +352,17 @@ export default function AiFeedbackPage() {
                     onChange={setSelectedProjectId}
                     placeholder="프로젝트를 선택해주세요."
                     onCreateNew={async (name) => {
-                      const p = await createProject({
-                        name,
-                        description: "",
-                        category: "미분류",
-                        leader: "미선택",
-                      });
-                      setSelectedProjectId(p.id);
+                      try {
+                        const p = await createProject({
+                          name,
+                          description: "",
+                          category: "미분류",
+                          leader: "미선택",
+                        });
+                        setSelectedProjectId(p.id);
+                      } catch (e) {
+                        console.error(e);
+                      }
                     }}
                   />
                 </div>
@@ -270,63 +380,12 @@ export default function AiFeedbackPage() {
                 />
                 <button
                   type="button"
-                  onClick={() => {
-                    setFeedbackError(null);
-                    if (!selectedProjectId) {
-                      setFeedbackError("프로젝트를 선택해주세요.");
-                      return;
-                    }
-                    if (!selectedFile) {
-                      setFeedbackError("시안 이미지를 업로드해주세요.");
-                      return;
-                    }
-                    setFeedbackRequested(true);
-
-                    const file = selectedFile;
-                    const predLabel =
-                      predictionLabelFromProbability(approvalProbability);
-                    const pct = Math.round(approvalProbability * 100);
-                    const summaryReason = [
-                      `${predLabel} (${pct}%)`,
-                      designDescription.trim() || file.name,
-                    ].join(" · ");
-
-                    const payload = {
-                      projectId: selectedProjectId,
-                      projectName: selectedProjectName,
-                      fileName: file.name,
-                      description: designDescription.trim(),
-                      summaryReason,
-                      aiExplanation: AI_FEEDBACK_EXPLANATION_FULL,
-                      status:
-                        (approvalProbability >= 0.5
-                          ? "Approved"
-                          : "Rejected") as const,
-                      approvalProbability,
-                    };
-
-                    if (preview) {
-                      addAiFeedbackHistory({
-                        ...payload,
-                        design_image_data_url: preview,
-                      });
-                    } else {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        addAiFeedbackHistory({
-                          ...payload,
-                          design_image_data_url:
-                            typeof reader.result === "string"
-                              ? reader.result
-                              : undefined,
-                        });
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                  className="absolute bottom-[20px] right-[20px] z-10 inline-flex items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-900"
+                  disabled={feedbackLoading}
+                  aria-busy={feedbackLoading}
+                  onClick={() => void requestAiFeedback()}
+                  className="absolute bottom-[20px] right-[20px] z-10 inline-flex items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  피드백 요청 →
+                  {feedbackLoading ? "분석 중…" : "피드백 요청 →"}
                 </button>
               </div>
               {feedbackError ? (
@@ -349,14 +408,23 @@ export default function AiFeedbackPage() {
                   AI 분석 결과
                 </h2>
                 <p className="mt-1 text-xs text-zinc-500">
-                  최근 의사결정/피드백 패턴 기반 예측 (예시 데이터)
+                  {latestSessionFeedback
+                    ? "OpenAI(gpt-4o-mini) 응답 기반"
+                    : feedbackLoading
+                      ? "분석 중…"
+                      : "프로젝트·시안을 보내 AI 피드백을 받습니다."}
                 </p>
               </div>
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-zinc-800"
+                disabled={feedbackLoading}
+                onClick={() => void requestAiFeedback()}
+                className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white shadow-sm hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw className="h-4 w-4" aria-hidden />
+                <RefreshCw
+                  className={`h-4 w-4 ${feedbackLoading ? "animate-spin" : ""}`}
+                  aria-hidden
+                />
                 <span>분석 재실행</span>
               </button>
             </div>
@@ -365,7 +433,9 @@ export default function AiFeedbackPage() {
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
                 <p className="text-xs font-medium text-zinc-500">승인될 확률</p>
                 <p className="mt-2 text-4xl font-semibold tracking-tight text-zinc-900">
-                  {Math.round(approvalProbability * 100)}%
+                  {feedbackLoading && !latestSessionFeedback
+                    ? "—"
+                    : `${Math.round(approvalProbability * 100)}%`}
                 </p>
               </div>
               <div
@@ -415,11 +485,25 @@ export default function AiFeedbackPage() {
               AI 피드백 설명
             </h2>
             <div className="mt-3 rounded-xl border border-zinc-100 bg-zinc-50 p-4 text-sm leading-relaxed text-zinc-800">
-              {AI_FEEDBACK_EXPLANATION_PARAGRAPHS.map((para, i) => (
-                <p key={i} className={i > 0 ? "mt-3" : undefined}>
-                  {para}
-                </p>
-              ))}
+              {feedbackLoading && !latestSessionFeedback ? (
+                <p className="text-zinc-500">AI가 피드백을 작성 중입니다…</p>
+              ) : latestSessionFeedback?.aiExplanation ? (
+                latestSessionFeedback.aiExplanation
+                  .split(/\n\n+/)
+                  .map((para) => para.trim())
+                  .filter(Boolean)
+                  .map((para, i) => (
+                    <p key={i} className={i > 0 ? "mt-3" : undefined}>
+                      {para}
+                    </p>
+                  ))
+              ) : (
+                AI_FEEDBACK_EXPLANATION_PARAGRAPHS.map((para, i) => (
+                  <p key={i} className={i > 0 ? "mt-3" : undefined}>
+                    {para}
+                  </p>
+                ))
+              )}
             </div>
           </section>
 

@@ -40,7 +40,8 @@ const TAG_OPTIONS = [
 ];
 
 export default function ArchivePage() {
-  const { state, createOutput, createProject, updateOutput } = useStore();
+  const { state, createOutput, createProject, updateOutput, trashOutput } =
+    useStore();
   const [status, setStatus] = useState<Status>("Approved");
   const [feedback, setFeedback] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -58,6 +59,7 @@ export default function ArchivePage() {
   const [monthFilter, setMonthFilter] = useState<"all" | "2026-03" | "2026-02">(
     "all",
   );
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [detailOutputId, setDetailOutputId] = useState<string | null>(null);
   const [draftProjectId, setDraftProjectId] = useState("");
@@ -97,6 +99,12 @@ export default function ArchivePage() {
         .filter(Boolean),
       design_image_data_url: draftImage,
     });
+    setDetailOutputId(null);
+  };
+
+  const handleTrashDetail = () => {
+    if (!detailOutputId) return;
+    trashOutput(detailOutputId);
     setDetailOutputId(null);
   };
 
@@ -166,25 +174,32 @@ export default function ArchivePage() {
     return Array.from(map.entries());
   }, [filteredItems]);
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     if (!selectedProjectId) return;
-    createOutput({
-      projectId: selectedProjectId,
-      output_type: "design",
-      description: selectedFileName ? `시안: ${selectedFileName}` : "시안 업로드",
-      status,
-      reason: feedback.trim() || "(피드백 없음)",
-      tags: selectedTags,
-      design_image_data_url: preview ?? undefined,
-      deleted: false,
-    });
-    setFeedback("");
-    setSelectedFileName(null);
-    setPreview(null);
-    setSelectedTags([]);
-    setExpanded(false);
-    setIsAdding(false);
-    setNewTag("");
+    setUploadError(null);
+    try {
+      await createOutput({
+        projectId: selectedProjectId,
+        output_type: "design",
+        description: selectedFileName ? `시안: ${selectedFileName}` : "시안 업로드",
+        status,
+        reason: feedback.trim() || "(피드백 없음)",
+        tags: selectedTags,
+        design_image_data_url: preview ?? undefined,
+        deleted: false,
+      });
+      setFeedback("");
+      setSelectedFileName(null);
+      setPreview(null);
+      setSelectedTags([]);
+      setExpanded(false);
+      setIsAdding(false);
+      setNewTag("");
+    } catch (e) {
+      setUploadError(
+        e instanceof Error ? e.message : "업로드에 실패했습니다.",
+      );
+    }
   };
 
   return (
@@ -335,13 +350,17 @@ export default function ArchivePage() {
                     onChange={setSelectedProjectId}
                     placeholder="프로젝트를 선택해주세요."
                     onCreateNew={async (name) => {
-                      const p = await createProject({
-                        name,
-                        description: "",
-                        category: "미분류",
-                        leader: "미선택",
-                      });
-                      setSelectedProjectId(p.id);
+                      try {
+                        const p = await createProject({
+                          name,
+                          description: "",
+                          category: "미분류",
+                          leader: "미선택",
+                        });
+                        setSelectedProjectId(p.id);
+                      } catch (e) {
+                        console.error(e);
+                      }
                     }}
                   />
                 </div>
@@ -462,6 +481,11 @@ export default function ArchivePage() {
                   피드백 업로드
                 </button>
               </div>
+              {uploadError ? (
+                <p className="mt-2 text-xs font-medium text-rose-600">
+                  {uploadError}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -637,13 +661,17 @@ export default function ArchivePage() {
                     onChange={setDraftProjectId}
                     placeholder="프로젝트를 선택해주세요."
                     onCreateNew={async (name) => {
-                      const p = await createProject({
-                        name,
-                        description: "",
-                        category: "미분류",
-                        leader: "미선택",
-                      });
-                      setDraftProjectId(p.id);
+                      try {
+                        const p = await createProject({
+                          name,
+                          description: "",
+                          category: "미분류",
+                          leader: "미선택",
+                        });
+                        setDraftProjectId(p.id);
+                      } catch (e) {
+                        console.error(e);
+                      }
                     }}
                   />
                 </div>
@@ -740,22 +768,31 @@ export default function ArchivePage() {
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2 border-t border-zinc-100 pt-4">
+            <div className="mt-6 flex items-center justify-between gap-2 border-t border-zinc-100 pt-4">
               <button
                 type="button"
-                onClick={() => setDetailOutputId(null)}
-                className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                onClick={handleTrashDetail}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-medium text-white hover:bg-rose-700"
               >
-                닫기
+                삭제하기
               </button>
-              <button
-                type="button"
-                onClick={handleSaveDetail}
-                disabled={!draftProjectId}
-                className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-              >
-                저장
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDetailOutputId(null)}
+                  className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                >
+                  닫기
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveDetail}
+                  disabled={!draftProjectId}
+                  className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  저장
+                </button>
+              </div>
             </div>
           </div>
         </div>

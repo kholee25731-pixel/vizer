@@ -7,8 +7,27 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import {
+  insertAiFeedbackRow,
+  mapAiFeedbackRow,
+  selectAiFeedbacksForProjectIds,
+  encodeAiFeedbackContent,
+} from "@/lib/db/aiFeedbacks";
+import { encodeFeedbackContent } from "@/lib/db/codec";
+import {
+  deleteFeedbackRow,
+  insertFeedbackRow,
+  mapFeedbackRow,
+  selectFeedbacksForProjectIds,
+  updateFeedbackRow,
+  updateFeedbacksTrashForProject,
+} from "@/lib/db/feedbacks";
+import {
+  deleteProjectCascade,
+  insertProjectRow,
+  updateProjectRow,
+} from "@/lib/db/projects";
 import { selectProjectsForCurrentUser } from "@/lib/fetchProjects";
-import { insertProjectForCurrentUser } from "@/lib/insertProject";
 import { supabase } from "@/lib/supabase";
 import { WORK_TYPES } from "../constants/taxonomy";
 
@@ -36,7 +55,6 @@ export type Project = {
   description: string;
   category: ProjectCategory;
   leader: ProjectLeader;
-  /** 진행 방식 (기존 데이터 없으면 UI에서 기본값 표시) */
   cycle?: ProjectCycle;
   createdAt: string;
   deleted: boolean;
@@ -53,7 +71,6 @@ export type CreativeOutput = {
   description: string;
   status: OutputStatus;
   reason: string;
-  /** MVP: 피드백 아카이브에서 선택한 해시태그 */
   tags?: string[];
   design_image_data_url?: string;
   copy_text?: string;
@@ -62,7 +79,6 @@ export type CreativeOutput = {
   deletedAt?: string;
 };
 
-/** AI 피드백 페이지에서 「피드백 요청」 시 쌓이는 기록 (아카이브 outputs 와 분리) */
 export type AiFeedbackHistoryEntry = {
   id: string;
   projectId: string;
@@ -70,9 +86,7 @@ export type AiFeedbackHistoryEntry = {
   fileName: string;
   description: string;
   design_image_data_url?: string;
-  /** 카드에 표시할 한 줄 요약 (예측 라벨 + 설명 등) */
   summaryReason: string;
-  /** AI 피드백 설명 본문 (히스토리 카드 3줄 요약용) */
   aiExplanation?: string;
   status: OutputStatus;
   approvalProbability: number;
@@ -83,15 +97,14 @@ type StoreState = {
   projects: Project[];
   outputs: CreativeOutput[];
   leaders: string[];
-  /** 워크타입 목록 (고정 기본값 + 관리자 편집); 로컬 저장 키는 호환을 위해 `categories` 유지 */
   categories: string[];
-  /** AI 피드백 탭 전용 요청 히스토리 */
   aiFeedbackHistory: AiFeedbackHistoryEntry[];
 };
 
 type StoreApi = {
   state: StoreState;
   addLeader: (name: string) => void;
+  removeLeader: (name: string) => void;
   addWorkType: (name: string) => void;
   removeWorkType: (name: string) => void;
   createProject: (input: {
@@ -105,7 +118,9 @@ type StoreApi = {
     projectId: string,
     patch: Partial<Pick<Project, "leader" | "category" | "description" | "cycle">>,
   ) => void;
-  createOutput: (input: Omit<CreativeOutput, "id" | "createdAt">) => CreativeOutput;
+  createOutput: (
+    input: Omit<CreativeOutput, "id" | "createdAt">,
+  ) => Promise<CreativeOutput>;
   updateOutput: (
     outputId: string,
     patch: Partial<
@@ -121,18 +136,26 @@ type StoreApi = {
     >,
   ) => void;
   trashProject: (projectId: string) => void;
+  trashOutput: (outputId: string) => void;
   restoreProject: (projectId: string) => void;
   deleteProjectPermanently: (projectId: string) => void;
   restoreOutput: (outputId: string) => void;
   deleteOutputPermanently: (outputId: string) => void;
   addAiFeedbackHistory: (
     input: Omit<AiFeedbackHistoryEntry, "id" | "createdAt">,
-  ) => void;
+  ) => Promise<void>;
+  prependAiFeedbackHistory: (entry: AiFeedbackHistoryEntry) => void;
 };
 
 const STORAGE_KEY = "splice_ai_store_v1";
 
-/** localStorage 용량 절약: data URL 이미지 제거 */
+/** localStorage에 남아 있을 수 있는 비-UUID 레거시 행 제거용 */
+function isStoredEntityId(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    id,
+  );
+}
+
 function stripStoredImages(s: StoreState): StoreState {
   return {
     ...s,
@@ -162,10 +185,6 @@ function tryPersistToLocalStorage(data: StoreState): boolean {
   }
 }
 
-function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-}
-
 function safeParse(json: string | null): StoreState | null {
   if (!json) return null;
   try {
@@ -177,67 +196,13 @@ function safeParse(json: string | null): StoreState | null {
 
 const StoreContext = createContext<StoreApi | null>(null);
 
-const DEFAULT_LEADERS = ["효정", "근호"];
-
 const DEFAULT_WORK_TYPES: string[] = [...WORK_TYPES];
 
 const DEFAULT_STATE: StoreState = {
-  leaders: DEFAULT_LEADERS,
+  leaders: [],
   categories: DEFAULT_WORK_TYPES,
-  projects: [
-    {
-      id: "seed_p1",
-      name: "수상한 스튜디오 리뉴얼",
-      description: "스튜디오 브랜드 리뉴얼 프로젝트",
-      category: "마케팅 및 브랜딩" as ProjectCategory,
-      leader: "효정",
-      cycle: "단발성",
-      createdAt: "2026-02-12T00:00:00.000Z",
-      deleted: false,
-    },
-    {
-      id: "seed_p2",
-      name: "26 재계약식_어나더 운동회",
-      description: "크루 단합을 위한 연례 이벤트",
-      category: "내부 지원" as ProjectCategory,
-      leader: "근호",
-      cycle: "루틴",
-      createdAt: "2026-02-02T00:00:00.000Z",
-      deleted: false,
-    },
-    {
-      id: "seed_p3",
-      name: "26 코엑스_K-Edu",
-      description: "교육 박람회 디자인 프로젝트",
-      category: "제품 생산" as ProjectCategory,
-      leader: "근호",
-      cycle: "단발성",
-      createdAt: "2026-01-21T00:00:00.000Z",
-      deleted: false,
-    },
-  ],
-  outputs: [
-    {
-      id: "seed_out_1",
-      projectId: "seed_p1",
-      output_type: "design",
-      description: "시안 #1",
-      status: "Rejected",
-      reason: "레이아웃이 너무 복잡함",
-      createdAt: "2026-03-14T00:00:00.000Z",
-      deleted: false,
-    },
-    {
-      id: "seed_out_2",
-      projectId: "seed_p1",
-      output_type: "design",
-      description: "시안 #2",
-      status: "Approved",
-      reason: "CTA 버튼 강조",
-      createdAt: "2026-03-16T00:00:00.000Z",
-      deleted: false,
-    },
-  ],
+  projects: [],
+  outputs: [],
   aiFeedbackHistory: [],
 };
 
@@ -245,11 +210,10 @@ function normalizeCycle(c: unknown): ProjectCycle | undefined {
   return c === "루틴" || c === "단발성" ? c : undefined;
 }
 
-function mapSupabaseProjectRow(row: Record<string, unknown>): Project {
-  const id =
-    row.id != null && String(row.id) !== ""
-      ? String(row.id)
-      : uid("proj");
+function mapSupabaseProjectRow(row: Record<string, unknown>): Project | null {
+  const id = row.id != null ? String(row.id).trim() : "";
+  if (!id) return null;
+
   const nameRaw = row.name != null ? String(row.name).trim() : "";
   const name = nameRaw || "새 프로젝트";
   const description =
@@ -268,13 +232,11 @@ function mapSupabaseProjectRow(row: Record<string, unknown>): Project {
       : typeof row.createdAt === "string"
         ? row.createdAt
         : new Date().toISOString();
+
   const deleted = Boolean(row.deleted);
+  const deletedAtRaw = row.deleted_at;
   const deletedAt =
-    typeof row.deleted_at === "string"
-      ? row.deleted_at
-      : typeof row.deletedAt === "string"
-        ? row.deletedAt
-        : undefined;
+    typeof deletedAtRaw === "string" ? deletedAtRaw : undefined;
 
   return {
     id,
@@ -291,26 +253,43 @@ function mapSupabaseProjectRow(row: Record<string, unknown>): Project {
 
 function normalizeLoadedState(parsed: StoreState): StoreState {
   const projects = Array.isArray(parsed.projects)
-    ? parsed.projects.map((p) => ({
-        ...p,
-        cycle: normalizeCycle(p.cycle) ?? "단발성",
-      }))
-    : DEFAULT_STATE.projects;
+    ? parsed.projects
+        .filter((p) => isStoredEntityId(p.id))
+        .map((p) => ({
+          ...p,
+          cycle: normalizeCycle(p.cycle) ?? "단발성",
+        }))
+    : [];
+
+  const outputs = Array.isArray(parsed.outputs)
+    ? parsed.outputs.filter(
+        (o) => isStoredEntityId(o.id) && isStoredEntityId(o.projectId),
+      )
+    : [];
+
+  const aiFeedbackHistory = Array.isArray(parsed.aiFeedbackHistory)
+    ? parsed.aiFeedbackHistory.filter(
+        (h) => isStoredEntityId(h.id) && isStoredEntityId(h.projectId),
+      )
+    : [];
 
   return {
     ...parsed,
     projects,
-    leaders:
-      Array.isArray(parsed.leaders) && parsed.leaders.length > 0
-        ? parsed.leaders
-        : DEFAULT_LEADERS,
+    outputs,
+    aiFeedbackHistory,
+    leaders: Array.isArray(parsed.leaders)
+      ? parsed.leaders.filter(
+          (l): l is string =>
+            typeof l === "string" &&
+            l.trim() !== "" &&
+            l !== "미선택",
+        )
+      : [],
     categories:
       Array.isArray(parsed.categories) && parsed.categories.length > 0
         ? parsed.categories
         : DEFAULT_WORK_TYPES,
-    aiFeedbackHistory: Array.isArray(parsed.aiFeedbackHistory)
-      ? parsed.aiFeedbackHistory
-      : [],
   };
 }
 
@@ -321,14 +300,7 @@ export function useStore() {
 }
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
-  /**
-   * SSR/CSR 첫 렌더는 동일해야 hydration mismatch가 나지 않음.
-   * localStorage 복원은 마운트 후 useEffect에서만 수행.
-   */
-  const [state, setState] = useState<StoreState>({
-    ...DEFAULT_STATE,
-    projects: [],
-  });
+  const [state, setState] = useState<StoreState>(DEFAULT_STATE);
   const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
@@ -345,9 +317,19 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (rows === null) {
         setState(base);
       } else {
+        const projects = rows
+          .map((r) => mapSupabaseProjectRow(r))
+          .filter((p): p is Project => p !== null);
+        const pids = projects.map((p) => p.id);
+        const fbRaw = await selectFeedbacksForProjectIds(pids);
+        const outputs = fbRaw.map(mapFeedbackRow);
+        const aiRaw = await selectAiFeedbacksForProjectIds(pids);
+        const aiFeedbackHistory = aiRaw.map(mapAiFeedbackRow);
         setState({
           ...base,
-          projects: rows.map(mapSupabaseProjectRow),
+          projects,
+          outputs,
+          aiFeedbackHistory,
         });
       }
       setStorageReady(true);
@@ -407,12 +389,33 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       state,
       addLeader: (name) => {
         const trimmed = name.trim();
-        if (!trimmed) return;
+        if (!trimmed || trimmed === "미선택") return;
         setState((prev) =>
           prev.leaders.some((l) => l.toLowerCase() === trimmed.toLowerCase())
             ? prev
             : { ...prev, leaders: [...prev.leaders, trimmed] },
         );
+      },
+      removeLeader: (name) => {
+        const trimmed = name.trim();
+        if (!trimmed || trimmed === "미선택") return;
+        setState((prev) => {
+          if (!prev.leaders.includes(trimmed)) return prev;
+          const nextLeaders = prev.leaders.filter((l) => l !== trimmed);
+          const projects = prev.projects.map((p) => {
+            if (p.leader !== trimmed) return p;
+            const next: Project = { ...p, leader: "미선택" };
+            void updateProjectRow(next.id, {
+              name: next.name,
+              leader: null,
+              category: String(next.category),
+              cycle: next.cycle ?? "단발성",
+              description: next.description ?? "",
+            });
+            return next;
+          });
+          return { ...prev, leaders: nextLeaders, projects };
+        });
       },
       addWorkType: (name) => {
         const trimmed = name.trim();
@@ -428,65 +431,66 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           let nextTypes = prev.categories.filter((c) => c !== name);
           if (nextTypes.length === 0) nextTypes = [...WORK_TYPES];
           const fallback = nextTypes[0] ?? WORK_TYPES[0];
-          return {
-            ...prev,
-            categories: nextTypes,
-            projects: prev.projects.map((p) =>
-              p.category === name
-                ? { ...p, category: fallback as ProjectCategory }
-                : p,
-            ),
-          };
+          const projects = prev.projects.map((p) => {
+            if (p.category !== name) return p;
+            const next = { ...p, category: fallback as ProjectCategory };
+            void updateProjectRow(next.id, {
+              name: next.name,
+              leader: next.leader === "미선택" ? null : String(next.leader),
+              category: String(next.category),
+              cycle: next.cycle ?? "단발성",
+              description: next.description ?? "",
+            });
+            return next;
+          });
+          return { ...prev, categories: nextTypes, projects };
         });
       },
       createProject: async (input) => {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        if (!authUser) {
+          throw new Error("로그인이 필요합니다.");
+        }
+
         const cycle: ProjectCycle =
           input.cycle === "루틴" || input.cycle === "단발성"
             ? input.cycle
             : "단발성";
-        const project: Project = {
-          id: uid("proj"),
-          name: input.name.trim() || "새 프로젝트",
-          description: input.description ?? "",
-          category: (input.category ?? WORK_TYPES[0]) as ProjectCategory,
-          leader: input.leader ?? "미선택",
-          cycle,
-          createdAt: new Date().toISOString(),
-          deleted: false,
-        };
-        setState((prev) => ({ ...prev, projects: [project, ...prev.projects] }));
-        const localId = project.id;
+        const name = input.name.trim() || "새 프로젝트";
+        const description = input.description ?? "";
 
-        const result = await insertProjectForCurrentUser({
-          name: project.name,
+        const result = await insertProjectRow({
+          name,
+          user_id: authUser.id,
+          leader:
+            (input.leader ?? "미선택") === "미선택"
+              ? null
+              : String(input.leader),
+          category: String((input.category ?? WORK_TYPES[0]) as ProjectCategory),
+          cycle,
+          description,
         });
 
         if (!result.ok) {
-          return project;
+          throw new Error(result.message ?? "프로젝트 생성에 실패했습니다.");
         }
 
-        const dbId = result.id;
-        const merged: Project = { ...project, id: dbId };
+        const mapped = mapSupabaseProjectRow(result.row);
+        if (!mapped) {
+          throw new Error("프로젝트 응답이 유효하지 않습니다.");
+        }
 
         setState((prev) => ({
           ...prev,
-          projects: prev.projects.map((p) =>
-            p.id === localId ? merged : p,
-          ),
-          outputs: prev.outputs.map((o) =>
-            o.projectId === localId ? { ...o, projectId: dbId } : o,
-          ),
-          aiFeedbackHistory: (prev.aiFeedbackHistory ?? []).map((h) =>
-            h.projectId === localId ? { ...h, projectId: dbId } : h,
-          ),
+          projects: [mapped, ...prev.projects],
         }));
-
-        return merged;
+        return mapped;
       },
       updateProject: (projectId, patch) => {
-        setState((prev) => ({
-          ...prev,
-          projects: prev.projects.map((p) => {
+        setState((prev) => {
+          const projects = prev.projects.map((p) => {
             if (p.id !== projectId) return p;
             const next: Project = { ...p, ...patch };
             if (patch.cycle !== undefined) {
@@ -496,26 +500,73 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                   : (p.cycle ?? "단발성");
             }
             return next;
-          }),
-        }));
+          });
+          const p = projects.find((x) => x.id === projectId);
+          if (p) {
+            void updateProjectRow(projectId, {
+              name: p.name,
+              leader: p.leader === "미선택" ? null : String(p.leader),
+              category: String(p.category),
+              cycle: p.cycle ?? "단발성",
+              description: p.description ?? "",
+            });
+          }
+          return { ...prev, projects };
+        });
       },
-      createOutput: (input) => {
-        const output: CreativeOutput = {
-          ...input,
-          id: uid("out"),
-          createdAt: new Date().toISOString(),
-          deleted: false,
-        };
-        setState((prev) => ({ ...prev, outputs: [output, ...prev.outputs] }));
+      createOutput: async (input) => {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        if (!authUser) {
+          throw new Error("로그인이 필요합니다.");
+        }
+
+        const res = await insertFeedbackRow({
+          project_id: input.projectId,
+          content: encodeFeedbackContent({
+            output_type: input.output_type,
+            status: input.status,
+            reason: input.reason,
+            description: input.description,
+            tags: input.tags,
+            copy_text: input.copy_text,
+          }),
+          image_url: input.design_image_data_url ?? "",
+        });
+        if (!res.ok) {
+          throw new Error(res.message ?? "피드백 저장에 실패했습니다.");
+        }
+
+        const output = mapFeedbackRow(res.row);
+        setState((prev) => ({
+          ...prev,
+          outputs: [output, ...prev.outputs],
+        }));
         return output;
       },
       updateOutput: (outputId, patch) => {
-        setState((prev) => ({
-          ...prev,
-          outputs: prev.outputs.map((o) =>
-            o.id === outputId ? { ...o, ...patch } : o,
-          ),
-        }));
+        setState((prev) => {
+          const outputs = prev.outputs.map((o) =>
+            o.id !== outputId ? o : { ...o, ...patch },
+          );
+          const o = outputs.find((x) => x.id === outputId);
+          if (o) {
+            void updateFeedbackRow(o.id, {
+              project_id: o.projectId,
+              content: encodeFeedbackContent({
+                output_type: o.output_type,
+                status: o.status,
+                reason: o.reason,
+                description: o.description,
+                tags: o.tags,
+                copy_text: o.copy_text,
+              }),
+              image_url: o.design_image_data_url ?? "",
+            });
+          }
+          return { ...prev, outputs };
+        });
       },
       trashProject: (projectId) => {
         const now = new Date().toISOString();
@@ -528,6 +579,24 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             o.projectId === projectId ? { ...o, deleted: true, deletedAt: now } : o,
           ),
         }));
+        void updateProjectRow(projectId, {
+          deleted: true,
+          deleted_at: now,
+        });
+        void updateFeedbacksTrashForProject(projectId, true, now);
+      },
+      trashOutput: (outputId) => {
+        const now = new Date().toISOString();
+        setState((prev) => ({
+          ...prev,
+          outputs: prev.outputs.map((o) =>
+            o.id === outputId ? { ...o, deleted: true, deletedAt: now } : o,
+          ),
+        }));
+        void updateFeedbackRow(outputId, {
+          deleted: true,
+          deleted_at: now,
+        });
       },
       restoreProject: (projectId) => {
         setState((prev) => ({
@@ -539,8 +608,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             o.projectId === projectId ? { ...o, deleted: false, deletedAt: undefined } : o,
           ),
         }));
+        void updateProjectRow(projectId, {
+          deleted: false,
+          deleted_at: null,
+        });
+        void updateFeedbacksTrashForProject(projectId, false, null);
       },
       deleteProjectPermanently: (projectId) => {
+        void deleteProjectCascade(projectId);
         setState((prev) => ({
           ...prev,
           projects: prev.projects.filter((p) => p.id !== projectId),
@@ -554,27 +629,95 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             o.id === outputId ? { ...o, deleted: false, deletedAt: undefined } : o,
           ),
         }));
+        void updateFeedbackRow(outputId, {
+          deleted: false,
+          deleted_at: null,
+        });
       },
       deleteOutputPermanently: (outputId) => {
+        void deleteFeedbackRow(outputId);
         setState((prev) => ({
           ...prev,
           outputs: prev.outputs.filter((o) => o.id !== outputId),
         }));
       },
-      addAiFeedbackHistory: (input) => {
-        const entry: AiFeedbackHistoryEntry = {
-          ...input,
-          id: uid("ai_fb"),
-          createdAt: new Date().toISOString(),
-        };
+      prependAiFeedbackHistory: (entry) => {
         setState((prev) => ({
           ...prev,
           aiFeedbackHistory: [entry, ...(prev.aiFeedbackHistory ?? [])],
         }));
+      },
+      addAiFeedbackHistory: async (input) => {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        if (!authUser) {
+          console.warn("[ai_feedbacks] 로그인 필요 — 건너뜀");
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const parentContent = encodeFeedbackContent({
+          output_type: "design",
+          status: input.status,
+          reason: "(AI 피드백 요청)",
+          description: input.description,
+          tags: [],
+          copy_text: undefined,
+        });
+        const fbIns = await insertFeedbackRow({
+          project_id: input.projectId,
+          content: parentContent,
+          image_url: input.design_image_data_url ?? "",
+        });
+        if (!fbIns.ok) {
+          console.error("[ai_feedbacks] 부모 feedback 저장 실패:", fbIns.message);
+          return;
+        }
+
+        const parentRow = fbIns.row;
+        const parentId = String(parentRow.id ?? "");
+        if (!parentId) return;
+
+        const aiContent = encodeAiFeedbackContent({
+          projectName: input.projectName,
+          fileName: input.fileName,
+          summaryReason: input.summaryReason,
+          aiExplanation: input.aiExplanation,
+          status: input.status,
+          approvalProbability: input.approvalProbability,
+        });
+        const aiIns = await insertAiFeedbackRow({
+          project_id: input.projectId,
+          user_id: authUser.id,
+          content: aiContent,
+          image_url: input.design_image_data_url ?? "",
+        });
+
+        const newOutput = mapFeedbackRow(parentRow);
+
+        if (aiIns.ok) {
+          const historyEntry = mapAiFeedbackRow({
+            id: aiIns.id,
+            project_id: input.projectId,
+            content: aiContent,
+            created_at: now,
+            image_url: input.design_image_data_url ?? "",
+          });
+          setState((prev) => ({
+            ...prev,
+            outputs: [newOutput, ...prev.outputs],
+            aiFeedbackHistory: [historyEntry, ...(prev.aiFeedbackHistory ?? [])],
+          }));
+        } else {
+          setState((prev) => ({
+            ...prev,
+            outputs: [newOutput, ...prev.outputs],
+          }));
+        }
       },
     };
   }, [state]);
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>;
 }
-

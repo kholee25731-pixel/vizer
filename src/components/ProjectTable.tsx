@@ -8,6 +8,7 @@ import { Trash2 } from "lucide-react";
 import Link from "next/link";
 import { CycleInfoModal } from "./CycleInfoModal";
 import { CustomDropdown } from "./CustomDropdown";
+import { LeadersManageModal } from "./LeadersManageModal";
 import { Tag } from "./Tag";
 import { WorkTypesManageModal } from "./WorkTypesManageModal";
 
@@ -39,12 +40,18 @@ export function ProjectTable({
   const [descDraft, setDescDraft] = useState("");
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [workTypesModalOpen, setWorkTypesModalOpen] = useState(false);
+  const [leadersModalOpen, setLeadersModalOpen] = useState(false);
   const [cycleInfoModalOpen, setCycleInfoModalOpen] = useState(false);
 
   const projects = useMemo<Project[]>(() => {
     const all = (state.projects ?? []).filter((p) => !p.deleted);
     return typeof limit === "number" ? all.slice(0, limit) : all;
   }, [state.projects, limit]);
+
+  const leaderOptions = useMemo(
+    () => ["미선택", ...state.leaders.filter((l) => l !== "미선택")],
+    [state.leaders],
+  );
 
   const grid = showDetail
     ? "grid grid-cols-[minmax(0,2fr)_minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.55fr)]"
@@ -127,13 +134,15 @@ export function ProjectTable({
                   ) : (
                     <CustomDropdown
                       variant="inline"
-                      options={state.leaders}
+                      options={leaderOptions}
                       value={project.leader}
                       onChange={(v) => {
-                        addLeader(v);
+                        if (v !== "미선택") addLeader(v);
                         updateProject(project.id, { leader: v });
                       }}
                       placeholder="메인 리더"
+                      showEditButton
+                      onEditClick={() => setLeadersModalOpen(true)}
                     />
                   )}
                 </div>
@@ -259,6 +268,10 @@ export function ProjectTable({
       <WorkTypesManageModal
         open={workTypesModalOpen}
         onClose={() => setWorkTypesModalOpen(false)}
+      />
+      <LeadersManageModal
+        open={leadersModalOpen}
+        onClose={() => setLeadersModalOpen(false)}
       />
       <CycleInfoModal
         open={cycleInfoModalOpen}

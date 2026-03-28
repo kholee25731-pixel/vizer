@@ -19,15 +19,27 @@ export async function selectProjectsForCurrentUser(): Promise<
     return NO_USER;
   }
 
-  const { data, error } = await supabase
-    .from("projects")
-    .select("*")
-    .eq("user_id", user.id);
+  const [active, trashed] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("deleted", false),
+    supabase
+      .from("projects")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("deleted", true),
+  ]);
 
-  if (error) {
-    console.error("[projects] select 실패:", error.message);
+  if (active.error) {
+    console.error("[projects] select (active) 실패:", active.error.message);
+    return [];
+  }
+  if (trashed.error) {
+    console.error("[projects] select (trashed) 실패:", trashed.error.message);
     return [];
   }
 
-  return data ?? [];
+  return [...(active.data ?? []), ...(trashed.data ?? [])];
 }
