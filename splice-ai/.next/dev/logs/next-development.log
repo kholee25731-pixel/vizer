@@ -1,0 +1,56 @@
+[01:04:44.707] Server  ERROR   ⨯ Error: Cannot find module 'next/dist/client/components/builtin/global-not-found'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:44.734] Server  ERROR   Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:44.757] Server  ERROR   ⨯ Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:44.799] Server  ERROR   Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:44.925] Server  ERROR   ⨯ Error: Cannot find module 'next/dist/client/components/builtin/global-not-found'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:44.958] Server  ERROR   Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:45.002] Server  ERROR   ⨯ Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
+[01:04:45.034] Server  ERROR   Error: Cannot find module 'next/dist/pages/_error'
+Require stack:
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/on-demand-entry-handler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/dev/hot-reloader-turbopack.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/router-server.js
+- /Users/khotest/kho/Splice project/Splice 바이브 코딩 소스/splice-ai/node_modules/next/dist/server/lib/start-server.js
