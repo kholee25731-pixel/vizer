@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { DropdownMenu, useDropdownDirection } from "./ui/Dropdown";
 import { Tag } from "./Tag";
 
 export type CustomDropdownProps = {
   options: string[];
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string) => void | Promise<void>;
   placeholder?: string;
   /** When set, `value` / `onChange` use these instead of option labels (same length as options). */
   optionValues?: string[];
@@ -33,6 +33,8 @@ export type CustomDropdownProps = {
   /** 패널이 열렸을 때 하단에 Edit 표시 */
   showEditButton?: boolean;
   onEditClick?: () => void;
+  /** true면 선택 비활성화 + 저장 중 스피너·문구 (예: Supabase 동기화) */
+  pending?: boolean;
 };
 
 export function CustomDropdown({
@@ -48,6 +50,7 @@ export function CustomDropdown({
   tagVariant = "default",
   showEditButton = false,
   onEditClick,
+  pending = false,
 }: CustomDropdownProps) {
   const isInlineTrigger =
     triggerType === "tag"
@@ -94,6 +97,10 @@ export function CustomDropdown({
   }, []);
 
   useEffect(() => {
+    if (pending) close();
+  }, [pending, close]);
+
+  useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) close();
@@ -103,11 +110,13 @@ export function CustomDropdown({
   }, [open, close]);
 
   const selectIndex = (i: number) => {
+    if (pending) return;
     onChange(values[i] ?? options[i]);
     close();
   };
 
   const handleCreate = () => {
+    if (pending) return;
     const label = query.trim();
     if (!label) return;
     if (onCreateNew) onCreateNew(label);
@@ -140,7 +149,7 @@ export function CustomDropdown({
   const panelWide = isInlineTrigger ? false : true;
 
   const panel = (
-    <DropdownMenu open={open} openUpward={openUpward} wide={panelWide}>
+    <DropdownMenu open={open && !pending} openUpward={openUpward} wide={panelWide}>
       <div className="space-y-1 border-b border-zinc-100 bg-white px-2 py-1.5">
         <input
           autoFocus
@@ -159,6 +168,7 @@ export function CustomDropdown({
             <li key={`${label}-${i}`}>
               <button
                 type="button"
+                disabled={pending}
                 onClick={() => selectIndex(i)}
                 className={
                   flatList
@@ -191,6 +201,7 @@ export function CustomDropdown({
         <div className="border-t border-zinc-100 px-2 py-1.5">
           <button
             type="button"
+            disabled={pending}
             onClick={handleCreate}
             className={`w-full rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 ${
               flatList ? "" : "flex flex-wrap items-center gap-1"
@@ -216,11 +227,12 @@ export function CustomDropdown({
         <div className="border-t border-zinc-100 px-2 py-1.5">
           <button
             type="button"
+            disabled={pending}
             onClick={() => {
               close();
               onEditClick?.();
             }}
-            className="w-full cursor-pointer rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
+            className="w-full cursor-pointer rounded-lg px-2 py-1 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Edit
           </button>
@@ -234,10 +246,15 @@ export function CustomDropdown({
       <div ref={rootRef} className="relative w-full min-w-0">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          disabled={pending}
+          aria-busy={pending}
+          onClick={() => {
+            if (pending) return;
+            setOpen((o) => !o);
+          }}
           className={`flex w-full items-center justify-between rounded-xl border border-zinc-200 bg-white px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-zinc-50 ${
             displayLabel ? "text-zinc-700" : "text-zinc-600"
-          }`}
+          } ${pending ? "cursor-wait opacity-80" : ""}`}
         >
           <span className="min-w-0 flex-1 truncate">
             {displayLabel ? (
@@ -246,9 +263,22 @@ export function CustomDropdown({
               <span className="text-zinc-400">{placeholder}</span>
             )}
           </span>
-          <span className="ml-2 shrink-0 text-zinc-400" aria-hidden>
-            ▾
-          </span>
+          {pending ? (
+            <span className="ml-2 inline-flex shrink-0 items-center gap-1 text-zinc-400">
+              <Loader2
+                className="h-3.5 w-3.5 animate-spin"
+                strokeWidth={2}
+                aria-hidden
+              />
+              <span className="text-[11px] font-medium whitespace-nowrap">
+                저장 중…
+              </span>
+            </span>
+          ) : (
+            <span className="ml-2 shrink-0 text-zinc-400" aria-hidden>
+              ▾
+            </span>
+          )}
         </button>
         {panel}
       </div>
@@ -263,15 +293,22 @@ export function CustomDropdown({
       >
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="inline-flex h-7 max-w-full min-w-0 items-center border-0 bg-transparent p-0 text-left shadow-none outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0 [&:focus]:ring-0"
+          disabled={pending}
+          aria-busy={pending}
+          onClick={() => {
+            if (pending) return;
+            setOpen((o) => !o);
+          }}
+          className={`inline-flex h-7 max-w-full min-w-0 items-center gap-1 border-0 bg-transparent p-0 text-left shadow-none outline-none ring-0 focus:outline-none focus-visible:outline-none focus-visible:ring-0 [&:focus]:ring-0 ${
+            pending ? "cursor-wait opacity-80" : ""
+          }`}
         >
           {displayLabel ? (
             <Tag
               label={displayLabel}
               variant={tagVariant}
               withChevron
-              chevronOpen={open}
+              chevronOpen={open && !pending}
             />
           ) : (
             <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 text-xs text-zinc-400">
@@ -283,6 +320,18 @@ export function CustomDropdown({
               />
             </span>
           )}
+          {pending ? (
+            <>
+              <Loader2
+                className="h-3 w-3 shrink-0 animate-spin text-zinc-400"
+                strokeWidth={2}
+                aria-hidden
+              />
+              <span className="text-[10px] font-medium whitespace-nowrap text-zinc-400">
+                저장 중…
+              </span>
+            </>
+          ) : null}
         </button>
         {panel}
       </div>
@@ -293,8 +342,15 @@ export function CustomDropdown({
     <div ref={rootRef} className="relative w-full">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex min-h-[2.375rem] w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-left text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+        disabled={pending}
+        aria-busy={pending}
+        onClick={() => {
+          if (pending) return;
+          setOpen((o) => !o);
+        }}
+        className={`flex min-h-[2.375rem] w-full items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-left text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 ${
+          pending ? "cursor-wait opacity-80" : ""
+        }`}
       >
         <span className="min-w-0 flex-1 text-left">
           {displayLabel ? (
@@ -302,13 +358,20 @@ export function CustomDropdown({
               label={displayLabel}
               variant={tagVariant}
               withChevron
-              chevronOpen={open}
+              chevronOpen={open && !pending}
             />
           ) : (
             <span className="text-sm text-zinc-400">{placeholder}</span>
           )}
         </span>
-        {!displayLabel ? (
+        {pending ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-zinc-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <span className="text-[11px] font-medium whitespace-nowrap">
+              저장 중…
+            </span>
+          </span>
+        ) : !displayLabel ? (
           <ChevronDown
             className="h-3 w-3 shrink-0 text-zinc-400"
             strokeWidth={2}

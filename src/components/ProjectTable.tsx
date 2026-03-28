@@ -57,9 +57,9 @@ export function ProjectTable({
     ? "grid grid-cols-[minmax(0,2fr)_minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,0.9fr)_minmax(0,0.7fr)_minmax(0,0.55fr)]"
     : "grid grid-cols-[minmax(0,2fr)_minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,0.9fr)_minmax(0,0.55fr)]";
 
-  const saveDescription = (projectId: string) => {
+  const saveDescription = async (projectId: string) => {
     if (editingDescId !== projectId) return;
-    updateProject(projectId, { description: descDraft });
+    await updateProject(projectId, { description: descDraft });
     setEditingDescId(null);
   };
 
@@ -67,8 +67,10 @@ export function ProjectTable({
     setOpenId((prev) => {
       if (prev === project.id) {
         if (editingDescId === project.id) {
-          updateProject(project.id, { description: descDraft });
-          setEditingDescId(null);
+          void (async () => {
+            await updateProject(project.id, { description: descDraft });
+            setEditingDescId(null);
+          })();
         }
         return null;
       }
@@ -114,6 +116,7 @@ export function ProjectTable({
         {projects.map((project) => {
           const isOpen = openId === project.id;
           const cyc = displayCycle(project);
+          const rowPending = Boolean(state.projectUpdatePending[project.id]);
           const descText =
             project.description?.trim() ? project.description : "상세내용이 없습니다.";
 
@@ -136,9 +139,10 @@ export function ProjectTable({
                       variant="inline"
                       options={leaderOptions}
                       value={project.leader}
-                      onChange={(v) => {
+                      pending={rowPending}
+                      onChange={async (v) => {
                         if (v !== "미선택") addLeader(v);
-                        updateProject(project.id, { leader: v });
+                        await updateProject(project.id, { leader: v });
                       }}
                       placeholder="메인 리더"
                       showEditButton
@@ -156,11 +160,12 @@ export function ProjectTable({
                       variant="inline"
                       options={[...state.categories]}
                       value={project.category}
-                      onChange={(v) =>
-                        updateProject(project.id, {
+                      pending={rowPending}
+                      onChange={async (v) => {
+                        await updateProject(project.id, {
                           category: v as ProjectCategory,
-                        })
-                      }
+                        });
+                      }}
                       placeholder="워크타입"
                       allowCreate={false}
                       tagVariant="sky"
@@ -179,11 +184,12 @@ export function ProjectTable({
                       variant="inline"
                       options={[...CYCLES]}
                       value={cyc}
-                      onChange={(v) =>
-                        updateProject(project.id, {
+                      pending={rowPending}
+                      onChange={async (v) => {
+                        await updateProject(project.id, {
                           cycle: v as ProjectCycle,
-                        })
-                      }
+                        });
+                      }}
                       placeholder="업무 방식"
                       allowCreate={false}
                       tagVariant="sky"
@@ -197,8 +203,9 @@ export function ProjectTable({
                   <div className="flex justify-center">
                     <button
                       type="button"
+                      disabled={rowPending}
                       onClick={() => toggleRowOpen(project)}
-                      className="text-[11px] font-medium text-zinc-600 hover:text-zinc-900"
+                      className="text-[11px] font-medium text-zinc-600 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isOpen ? "접기" : "열기"}
                     </button>
@@ -213,8 +220,9 @@ export function ProjectTable({
                   ) : (
                     <button
                       type="button"
+                      disabled={rowPending}
                       onClick={() => setConfirmingId(project.id)}
-                      className="p-1 text-zinc-400 hover:bg-zinc-50 hover:text-rose-600"
+                      className="p-1 text-zinc-400 hover:bg-zinc-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
                       aria-label="프로젝트 삭제"
                       title="삭제"
                     >
@@ -229,17 +237,18 @@ export function ProjectTable({
                   {editingDescId === project.id ? (
                     <textarea
                       autoFocus
+                      disabled={rowPending}
                       value={descDraft}
                       onChange={(e) => setDescDraft(e.target.value)}
-                      onBlur={() => saveDescription(project.id)}
+                      onBlur={() => void saveDescription(project.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          saveDescription(project.id);
+                          void saveDescription(project.id);
                         }
                       }}
                       rows={3}
-                      className="w-full resize-y rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                      className="w-full resize-y rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-900 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 disabled:cursor-wait disabled:opacity-70"
                     />
                   ) : (
                     <span className="inline align-baseline">
@@ -247,7 +256,8 @@ export function ProjectTable({
                       {readOnly ? null : (
                         <button
                           type="button"
-                          className="ml-1 inline align-baseline text-xs text-zinc-400 hover:text-zinc-700"
+                          disabled={rowPending}
+                          className="ml-1 inline align-baseline text-xs text-zinc-400 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => {
                             setEditingDescId(project.id);
                             setDescDraft(project.description ?? "");

@@ -99,6 +99,8 @@ type StoreState = {
   leaders: string[];
   categories: string[];
   aiFeedbackHistory: AiFeedbackHistoryEntry[];
+  /** 프로젝트 ID → Supabase `updateProject` 진행 중 */
+  projectUpdatePending: Record<string, boolean>;
 };
 
 type StoreApi = {
@@ -117,7 +119,7 @@ type StoreApi = {
   updateProject: (
     projectId: string,
     patch: Partial<Pick<Project, "leader" | "category" | "description" | "cycle">>,
-  ) => void;
+  ) => Promise<void>;
   createOutput: (
     input: Omit<CreativeOutput, "id" | "createdAt">,
   ) => Promise<CreativeOutput>;
@@ -167,6 +169,7 @@ function stripStoredImages(s: StoreState): StoreState {
       ...h,
       design_image_data_url: undefined,
     })),
+    projectUpdatePending: {},
   };
 }
 
@@ -204,6 +207,7 @@ const DEFAULT_STATE: StoreState = {
   projects: [],
   outputs: [],
   aiFeedbackHistory: [],
+  projectUpdatePending: {},
 };
 
 function normalizeCycle(c: unknown): ProjectCycle | undefined {
@@ -278,6 +282,7 @@ function normalizeLoadedState(parsed: StoreState): StoreState {
     projects,
     outputs,
     aiFeedbackHistory,
+    projectUpdatePending: {},
     leaders: Array.isArray(parsed.leaders)
       ? parsed.leaders.filter(
           (l): l is string =>
@@ -330,6 +335,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           projects,
           outputs,
           aiFeedbackHistory,
+          projectUpdatePending: {},
         });
       }
       setStorageReady(true);
@@ -488,31 +494,60 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }));
         return mapped;
       },
-      updateProject: (projectId, patch) => {
+      updateProject: async (projectId, patch) => {
+        let merged: Project | undefined;
+        let previous: Project | undefined;
+
         setState((prev) => {
-          const projects = prev.projects.map((p) => {
-            if (p.id !== projectId) return p;
-            const next: Project = { ...p, ...patch };
-            if (patch.cycle !== undefined) {
-              next.cycle =
-                patch.cycle === "루틴" || patch.cycle === "단발성"
-                  ? patch.cycle
-                  : (p.cycle ?? "단발성");
-            }
-            return next;
-          });
-          const p = projects.find((x) => x.id === projectId);
-          if (p) {
-            void updateProjectRow(projectId, {
-              name: p.name,
-              leader: p.leader === "미선택" ? null : String(p.leader),
-              category: String(p.category),
-              cycle: p.cycle ?? "단발성",
-              description: p.description ?? "",
-            });
+          const p = prev.projects.find((x) => x.id === projectId);
+          if (!p) return prev;
+          previous = p;
+          const next: Project = { ...p, ...patch };
+          if (patch.cycle !== undefined) {
+            next.cycle =
+              patch.cycle === "루틴" || patch.cycle === "단발성"
+                ? patch.cycle
+                : (p.cycle ?? "단발성");
           }
-          return { ...prev, projects };
+          merged = next;
+          return {
+            ...prev,
+            projects: prev.projects.map((x) =>
+              x.id === projectId ? next : x,
+            ),
+            projectUpdatePending: {
+              ...prev.projectUpdatePending,
+              [projectId]: true,
+            },
+          };
         });
+
+        try {
+          if (!merged || !previous) return;
+
+          const ok = await updateProjectRow(projectId, {
+            name: merged.name,
+            leader: merged.leader === "미선택" ? null : String(merged.leader),
+            category: String(merged.category),
+            cycle: merged.cycle ?? "단발성",
+            description: merged.description ?? "",
+          });
+
+          if (!ok) {
+            setState((prev) => ({
+              ...prev,
+              projects: prev.projects.map((p) =>
+                p.id === projectId ? previous! : p,
+              ),
+            }));
+          }
+        } finally {
+          setState((prev) => {
+            if (!prev.projectUpdatePending[projectId]) return prev;
+            const { [projectId]: _r, ...rest } = prev.projectUpdatePending;
+            return { ...prev, projectUpdatePending: rest };
+          });
+        }
       },
       createOutput: async (input) => {
         const {
