@@ -7,6 +7,9 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { selectProjectsForCurrentUser } from "@/lib/fetchProjects";
+import { insertProjectForCurrentUser } from "@/lib/insertProject";
+import { supabase } from "@/lib/supabase";
 import { WORK_TYPES } from "../constants/taxonomy";
 
 export type ProjectCategory =
@@ -97,7 +100,7 @@ type StoreApi = {
     category?: ProjectCategory;
     leader?: ProjectLeader;
     cycle?: ProjectCycle;
-  }) => Project;
+  }) => Promise<Project>;
   updateProject: (
     projectId: string,
     patch: Partial<Pick<Project, "leader" | "category" | "description" | "cycle">>,
@@ -242,6 +245,50 @@ function normalizeCycle(c: unknown): ProjectCycle | undefined {
   return c === "루틴" || c === "단발성" ? c : undefined;
 }
 
+function mapSupabaseProjectRow(row: Record<string, unknown>): Project {
+  const id =
+    row.id != null && String(row.id) !== ""
+      ? String(row.id)
+      : uid("proj");
+  const nameRaw = row.name != null ? String(row.name).trim() : "";
+  const name = nameRaw || "새 프로젝트";
+  const description =
+    row.description != null ? String(row.description) : "";
+  const leader = (row.leader != null
+    ? String(row.leader)
+    : "미선택") as ProjectLeader;
+  const cycle: ProjectCycle = normalizeCycle(row.cycle) ?? "단발성";
+  const catStr = row.category != null ? String(row.category) : "";
+  const category = (
+    DEFAULT_WORK_TYPES.includes(catStr) ? catStr : DEFAULT_WORK_TYPES[0]
+  ) as ProjectCategory;
+  const createdAt =
+    typeof row.created_at === "string"
+      ? row.created_at
+      : typeof row.createdAt === "string"
+        ? row.createdAt
+        : new Date().toISOString();
+  const deleted = Boolean(row.deleted);
+  const deletedAt =
+    typeof row.deleted_at === "string"
+      ? row.deleted_at
+      : typeof row.deletedAt === "string"
+        ? row.deletedAt
+        : undefined;
+
+  return {
+    id,
+    name,
+    description,
+    category,
+    leader,
+    cycle,
+    createdAt,
+    deleted,
+    deletedAt,
+  };
+}
+
 function normalizeLoadedState(parsed: StoreState): StoreState {
   const projects = Array.isArray(parsed.projects)
     ? parsed.projects.map((p) => ({
@@ -278,13 +325,46 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
    * SSR/CSR 첫 렌더는 동일해야 hydration mismatch가 나지 않음.
    * localStorage 복원은 마운트 후 useEffect에서만 수행.
    */
-  const [state, setState] = useState<StoreState>(DEFAULT_STATE);
+  const [state, setState] = useState<StoreState>({
+    ...DEFAULT_STATE,
+    projects: [],
+  });
   const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
-    const existing = safeParse(localStorage.getItem(STORAGE_KEY));
-    if (existing) setState(normalizeLoadedState(existing));
-    setStorageReady(true);
+    let cancelled = false;
+
+    const syncFromAuth = async () => {
+      const existing = safeParse(localStorage.getItem(STORAGE_KEY));
+      const base = existing ? normalizeLoadedState(existing) : DEFAULT_STATE;
+
+      const rows = await selectProjectsForCurrentUser();
+
+      if (cancelled) return;
+
+      if (rows === null) {
+        setState(base);
+      } else {
+        setState({
+          ...base,
+          projects: rows.map(mapSupabaseProjectRow),
+        });
+      }
+      setStorageReady(true);
+    };
+
+    void syncFromAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      void syncFromAuth();
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -359,7 +439,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           };
         });
       },
-      createProject: (input) => {
+      createProject: async (input) => {
         const cycle: ProjectCycle =
           input.cycle === "루틴" || input.cycle === "단발성"
             ? input.cycle
@@ -375,7 +455,33 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           deleted: false,
         };
         setState((prev) => ({ ...prev, projects: [project, ...prev.projects] }));
-        return project;
+        const localId = project.id;
+
+        const result = await insertProjectForCurrentUser({
+          name: project.name,
+        });
+
+        if (!result.ok) {
+          return project;
+        }
+
+        const dbId = result.id;
+        const merged: Project = { ...project, id: dbId };
+
+        setState((prev) => ({
+          ...prev,
+          projects: prev.projects.map((p) =>
+            p.id === localId ? merged : p,
+          ),
+          outputs: prev.outputs.map((o) =>
+            o.projectId === localId ? { ...o, projectId: dbId } : o,
+          ),
+          aiFeedbackHistory: (prev.aiFeedbackHistory ?? []).map((h) =>
+            h.projectId === localId ? { ...h, projectId: dbId } : h,
+          ),
+        }));
+
+        return merged;
       },
       updateProject: (projectId, patch) => {
         setState((prev) => ({

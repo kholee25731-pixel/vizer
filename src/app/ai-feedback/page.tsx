@@ -245,8 +245,8 @@ export default function AiFeedbackPage() {
                     value={selectedProjectId}
                     onChange={setSelectedProjectId}
                     placeholder="프로젝트를 선택해주세요."
-                    onCreateNew={(name) => {
-                      const p = createProject({
+                    onCreateNew={async (name) => {
+                      const p = await createProject({
                         name,
                         description: "",
                         category: "미분류",

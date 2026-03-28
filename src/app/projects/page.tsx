@@ -21,7 +21,7 @@ function ProjectsPage() {
   const [workTypesModalOpen, setWorkTypesModalOpen] = useState(false);
   const [cycleInfoModalOpen, setCycleInfoModalOpen] = useState(false);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setError(null);
     if (!projectName.trim()) {
       setError("프로젝트 명을 입력해주세요.");
@@ -44,7 +44,7 @@ function ProjectsPage() {
       return;
     }
 
-    createProject({
+    await createProject({
       name: projectName,
       description: nlDescription,
       category: workType as ProjectCategory,
