@@ -92,7 +92,8 @@ Return JSON:
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.7,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
@@ -118,15 +119,19 @@ Return JSON:
     return null;
   }
 
-  if (!res.ok) {
-    console.error("[analyzeDesign] OpenAI HTTP 오류:", res.status, data);
-    return null;
-  }
+  console.log("OPENAI RAW:", JSON.stringify(data, null, 2));
 
   const rec = data as {
     choices?: Array<{ message?: { content?: string | null } }>;
   };
   const content = rec.choices?.[0]?.message?.content;
+  console.log("AI CONTENT:", content);
+
+  if (!res.ok) {
+    console.error("[analyzeDesign] OpenAI HTTP 오류:", res.status, data);
+    return null;
+  }
+
   if (typeof content !== "string" || !content.trim()) {
     return null;
   }

@@ -77,6 +77,13 @@ export type CreativeOutput = {
   createdAt: string;
   deleted: boolean;
   deletedAt?: string;
+  /** DB `feedbacks` AI 분석 컬럼 — 아카이브 상세 등에서 표시 */
+  ai_background?: string;
+  ai_typography?: string;
+  ai_copywriting?: string;
+  ai_layout?: string;
+  ai_key_visual?: string;
+  ai_summary?: string;
 };
 
 export type AiSimilarPastCase = {

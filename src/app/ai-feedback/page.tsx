@@ -124,7 +124,7 @@ export default function AiFeedbackPage() {
     ).length;
     if (countForProject < MIN_FEEDBACK_FOR_AI) {
       setFeedbackError(
-        `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`,
+        `AI 평가를 사용하시려면, 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백 아카이브가 필요합니다.`,
       );
       return;
     }
@@ -467,7 +467,7 @@ export default function AiFeedbackPage() {
                   aria-busy={feedbackLoading}
                   title={
                     isLocked
-                      ? `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`
+                      ? `AI 평가를 사용하시려면, 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백 아카이브가 필요합니다.`
                       : undefined
                   }
                   onClick={() => void requestAiFeedback()}
@@ -478,7 +478,7 @@ export default function AiFeedbackPage() {
               </div>
               {isLocked && selectedProjectId ? (
                 <p className="mt-2 text-xs font-medium text-amber-800">
-                  {`AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`}
+                  {`AI 평가를 사용하시려면, 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백 아카이브가 필요합니다.`}
                 </p>
               ) : null}
               {feedbackError ? (
@@ -513,7 +513,7 @@ export default function AiFeedbackPage() {
                 disabled={feedbackLoading || isLocked}
                 title={
                   isLocked
-                    ? `AI 평가를 사용하려면 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백이 필요합니다.`
+                    ? `AI 평가를 사용하시려면, 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백 아카이브가 필요합니다.`
                     : undefined
                 }
                 onClick={() => void requestAiFeedback()}

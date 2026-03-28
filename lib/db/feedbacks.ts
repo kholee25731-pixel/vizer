@@ -35,6 +35,16 @@ export async function selectFeedbacksForProjectIds(
   return (data ?? []) as Record<string, unknown>[];
 }
 
+function rowTextOptional(
+  row: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const v = row[key];
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
 export function mapFeedbackRow(row: Record<string, unknown>): CreativeOutput {
   const meta = decodeFeedbackContent(String(row.content ?? ""));
   const deletedAtRaw = row.deleted_at;
@@ -53,6 +63,12 @@ export function mapFeedbackRow(row: Record<string, unknown>): CreativeOutput {
     deleted: Boolean(row.deleted),
     deletedAt:
       typeof deletedAtRaw === "string" ? deletedAtRaw : undefined,
+    ai_background: rowTextOptional(row, "ai_background"),
+    ai_typography: rowTextOptional(row, "ai_typography"),
+    ai_copywriting: rowTextOptional(row, "ai_copywriting"),
+    ai_layout: rowTextOptional(row, "ai_layout"),
+    ai_key_visual: rowTextOptional(row, "ai_key_visual"),
+    ai_summary: rowTextOptional(row, "ai_summary"),
   };
 }
 

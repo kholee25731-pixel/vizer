@@ -11,6 +11,24 @@ function statusLabelKo(s: Status): string {
   return s === "Approved" ? "승인됨" : "거절됨";
 }
 
+function ArchiveAiAnalysisField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string;
+}) {
+  const text = value?.trim();
+  return (
+    <div>
+      <p className="text-xs font-medium text-zinc-500">{label}</p>
+      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
+        {text ? text : "—"}
+      </p>
+    </div>
+  );
+}
+
 type ArchiveItem = {
   outputId: string;
   projectId: string;
@@ -85,6 +103,14 @@ export default function ArchivePage() {
     setDraftTagsText((o.tags ?? []).join(", "));
     setDraftImage(o.design_image_data_url);
   }, [detailOutputId, state.outputs]);
+
+  const detailOutput = useMemo(
+    () =>
+      detailOutputId
+        ? state.outputs.find((x) => x.id === detailOutputId && !x.deleted)
+        : undefined,
+    [detailOutputId, state.outputs],
+  );
 
   const handleSaveDetail = () => {
     if (!detailOutputId || !draftProjectId) return;
@@ -766,6 +792,40 @@ export default function ArchivePage() {
                   className="mt-2 w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
                 />
               </div>
+
+              {detailOutput ? (
+                <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4">
+                  <h4 className="text-xs font-semibold text-violet-900">
+                    AI 분석
+                  </h4>
+                  <div className="mt-3 space-y-3">
+                    <ArchiveAiAnalysisField
+                      label="배경 그래픽"
+                      value={detailOutput.ai_background}
+                    />
+                    <ArchiveAiAnalysisField
+                      label="타이포그래피"
+                      value={detailOutput.ai_typography}
+                    />
+                    <ArchiveAiAnalysisField
+                      label="카피라이팅"
+                      value={detailOutput.ai_copywriting}
+                    />
+                    <ArchiveAiAnalysisField
+                      label="레이아웃"
+                      value={detailOutput.ai_layout}
+                    />
+                    <ArchiveAiAnalysisField
+                      label="메인 그래픽"
+                      value={detailOutput.ai_key_visual}
+                    />
+                    <ArchiveAiAnalysisField
+                      label="요약"
+                      value={detailOutput.ai_summary}
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-6 flex items-center justify-between gap-2 border-t border-zinc-100 pt-4">

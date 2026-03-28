@@ -198,7 +198,7 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error: "NOT_ENOUGH_DATA",
-          message: `AI 평가를 위해 최소 ${TOTAL_MIN_REQUIRED}개의 피드백이 필요합니다.`,
+          message: `AI 평가를 사용하시려면, 최소 ${TOTAL_MIN_REQUIRED}개의 피드백 아카이브가 필요합니다.`,
           current: feedbackRows?.length ?? 0,
         },
         { status: 400 },
