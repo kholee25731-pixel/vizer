@@ -1,9 +1,22 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "../supabase";
 import {
   decodeFeedbackContent,
   encodeFeedbackContent,
 } from "./codec";
 import type { CreativeOutput } from "@/src/app/providers";
+
+export type InsertFeedbackFields = {
+  project_id: string;
+  content: string;
+  image_url: string;
+  ai_background?: string | null;
+  ai_typography?: string | null;
+  ai_copywriting?: string | null;
+  ai_layout?: string | null;
+  ai_key_visual?: string | null;
+  ai_summary?: string | null;
+};
 
 export async function selectFeedbacksForProjectIds(
   projectIds: string[],
@@ -41,21 +54,26 @@ export function mapFeedbackRow(row: Record<string, unknown>): CreativeOutput {
   };
 }
 
-export async function insertFeedbackRow(payload: {
-  project_id: string;
-  content: string;
-  image_url: string;
-}): Promise<
+export async function insertFeedbackWithClient(
+  client: SupabaseClient,
+  payload: InsertFeedbackFields,
+): Promise<
   | { ok: true; row: Record<string, unknown> }
   | { ok: false; message?: string }
 > {
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from("feedbacks")
     .insert({
       project_id: payload.project_id,
       content: payload.content,
-      image_url: payload.image_url,
+      image_url: payload.image_url ?? "",
       deleted: false,
+      ai_background: payload.ai_background ?? null,
+      ai_typography: payload.ai_typography ?? null,
+      ai_copywriting: payload.ai_copywriting ?? null,
+      ai_layout: payload.ai_layout ?? null,
+      ai_key_visual: payload.ai_key_visual ?? null,
+      ai_summary: payload.ai_summary ?? null,
     })
     .select()
     .single();
@@ -64,6 +82,15 @@ export async function insertFeedbackRow(payload: {
     return { ok: false, message: error?.message };
   }
   return { ok: true, row: data as Record<string, unknown> };
+}
+
+export async function insertFeedbackRow(
+  payload: InsertFeedbackFields,
+): Promise<
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; message?: string }
+> {
+  return insertFeedbackWithClient(supabase, payload);
 }
 
 /** 프로젝트 휴지통/복구 시 해당 프로젝트의 모든 feedbacks 일괄 반영 */

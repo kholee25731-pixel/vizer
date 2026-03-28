@@ -542,6 +542,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           });
 
           if (!ok) {
+            console.warn(
+              "[projects] UI 되돌림: Supabase projects update 실패 또는 갱신 0건",
+              projectId,
+            );
             setState((prev) => ({
               ...prev,
               projects: prev.projects.map((p) =>

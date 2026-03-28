@@ -51,14 +51,25 @@ export async function updateProjectRow(
     deleted_at: string | null;
   }>,
 ): Promise<boolean> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("projects")
     .update(patch)
-    .eq("id", projectId);
+    .eq("id", projectId)
+    .select();
+
   if (error) {
-    console.error("[projects] update 실패:", error.message);
+    console.error("[projects] update 실패", error);
     return false;
   }
+
+  if (!data || data.length === 0) {
+    console.error(
+      "[projects] update 0 rows (조건 불일치 — id·RLS·권한 등)",
+      { projectId },
+    );
+    return false;
+  }
+
   return true;
 }
 
