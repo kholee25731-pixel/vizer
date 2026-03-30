@@ -1,8 +1,5 @@
 import { analyzeDesign } from "@/lib/ai/analyzeDesign";
 import { decodeFeedbackContent } from "@/lib/db/codec";
-import {
-  updateFeedbackAiWithClient,
-} from "@/lib/db/feedbacks";
 import { createSupabaseForBearer } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -121,51 +118,63 @@ export async function POST(request: Request) {
     const designDescription =
       description !== "" ? description : rowDesc || meta.description.trim();
 
+    // 클라이언트에서 feedback 행 insert 직후 호출 → 항상 analyzeDesign 실행
     console.log("BEFORE ANALYZE DESIGN");
-    const analysis = await analyzeDesign({
+    const result = await analyzeDesign({
       image_url,
       description: designDescription,
       status: evalStatus,
       reason: evalReason,
     });
-    console.log("AI RAW RESULT:", analysis);
+    console.log("AI RAW RESULT:", result);
 
-    const result = await updateFeedbackAiWithClient(
-      supabase,
-      output_id,
-      !analysis
-        ? {
-            ai_background: null,
-            ai_typography: null,
-            ai_layout: null,
-            ai_copywriting: null,
-            ai_key_visual: null,
-            ai_summary: null,
-          }
-        : {
-            ai_background: JSON.stringify(analysis.background),
-            ai_typography: JSON.stringify(analysis.typography),
-            ai_layout: JSON.stringify(analysis.layout),
-            ai_copywriting: JSON.stringify(analysis.copywriting),
-            ai_key_visual: JSON.stringify(analysis.key_visual),
-            ai_summary: JSON.stringify({
-              concept: analysis.concept,
-              feedback_alignment: analysis.feedback_alignment,
-            }),
+    if (result) {
+      const { error: updateError } = await supabase
+        .from("feedbacks")
+        .update({
+          ai_background: JSON.stringify(result.background),
+          ai_typography: JSON.stringify(result.typography),
+          ai_layout: JSON.stringify(result.layout),
+          ai_copywriting: JSON.stringify(result.copywriting),
+          ai_key_visual: JSON.stringify(result.key_visual),
+          ai_summary: JSON.stringify({
+            concept: result.concept,
+            feedback_alignment: result.feedback_alignment,
+          }),
+        })
+        .eq("id", output_id);
+
+      if (updateError) {
+        return Response.json(
+          {
+            error: "피드백 AI 갱신에 실패했습니다.",
+            detail: updateError.message,
           },
-    );
+          { status: 500 },
+        );
+      }
+    }
 
-    if (!result.ok) {
+    const { data: feedbackRow, error: selectError } = await supabase
+      .from("feedbacks")
+      .select()
+      .eq("id", output_id)
+      .single();
+
+    if (selectError || !feedbackRow) {
       return Response.json(
-        { error: "피드백 AI 갱신에 실패했습니다.", detail: result.message },
+        {
+          error: "피드백 조회에 실패했습니다.",
+          detail: selectError?.message,
+        },
         { status: 500 },
       );
     }
 
     return Response.json({
       ok: true,
-      id: String((result.row as { id?: string }).id ?? ""),
-      row: result.row,
+      id: String((feedbackRow as { id?: string }).id ?? ""),
+      row: feedbackRow,
     });
   } catch (e) {
     console.error("[api/feedbacks] POST", e);
