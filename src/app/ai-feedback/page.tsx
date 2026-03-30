@@ -546,7 +546,8 @@ function SimilarCaseDetailModal({
 }
 
 export default function AiFeedbackPage() {
-  const { state, createProject, prependAiFeedbackHistory } = useStore();
+  const { state, storageReady, createProject, prependAiFeedbackHistory } =
+    useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeProjects = useMemo(
     () => (state.projects ?? []).filter((p) => !p.deleted),
@@ -561,11 +562,16 @@ export default function AiFeedbackPage() {
   }, [activeProjects, selectedProjectId]);
 
   const feedbackCount = useMemo(() => {
-    if (!selectedProjectId) return 0;
-    return (state.outputs ?? []).filter(
-      (o) => o.projectId === selectedProjectId && !o.deleted,
-    ).length;
-  }, [state.outputs, selectedProjectId]);
+    return (state.outputs ?? []).filter((o) => !o.deleted).length;
+  }, [state.outputs]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const outputs = state.outputs ?? [];
+    const count = outputs.filter((o) => !o.deleted).length;
+    console.log("AI COUNT:", count);
+    console.log("TOTAL OUTPUTS:", outputs.length);
+  }, [storageReady, state.outputs]);
 
   const isLocked = feedbackCount < MIN_FEEDBACK_FOR_AI;
 
@@ -610,15 +616,14 @@ export default function AiFeedbackPage() {
   };
 
   const requestAiFeedback = useCallback(async () => {
+    if (!storageReady) return;
     setFeedbackError(null);
     if (!selectedProjectId) {
       setFeedbackError("프로젝트를 선택해주세요.");
       return;
     }
-    const countForProject = (state.outputs ?? []).filter(
-      (o) => o.projectId === selectedProjectId && !o.deleted,
-    ).length;
-    if (countForProject < MIN_FEEDBACK_FOR_AI) {
+    const count = (state.outputs ?? []).filter((o) => !o.deleted).length;
+    if (count < MIN_FEEDBACK_FOR_AI) {
       setFeedbackError(
         `AI 평가를 사용하시려면, 최소 ${MIN_FEEDBACK_FOR_AI}개의 피드백 아카이브가 필요합니다.`,
       );
@@ -807,6 +812,7 @@ export default function AiFeedbackPage() {
     selectedProjectId,
     selectedProjectName,
     state.outputs,
+    storageReady,
   ]);
 
   const approvalProbability = latestSessionFeedback?.approvalProbability ?? 0.55;

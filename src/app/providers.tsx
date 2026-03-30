@@ -124,6 +124,8 @@ type StoreState = {
 
 type StoreApi = {
   state: StoreState;
+  /** Supabase·localStorage 동기화 완료 후 true */
+  storageReady: boolean;
   addLeader: (name: string) => void;
   removeLeader: (name: string) => void;
   addWorkType: (name: string) => void;
@@ -518,6 +520,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const api = useMemo<StoreApi>(() => {
     return {
       state,
+      storageReady,
       addLeader: (name) => {
         const trimmed = name.trim();
         if (!trimmed || trimmed === "미선택") return;
@@ -911,7 +914,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }
       },
     };
-  }, [state]);
+  }, [state, storageReady]);
 
   if (!hydrated) {
     return null;
