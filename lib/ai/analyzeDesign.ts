@@ -728,33 +728,38 @@ feedback_alignment를 포함해 사용자가 요청한 JSON 키를 빠짐없이 
 
   console.log("OPENAI RAW:", data);
 
-  const content = (
-    data as { choices?: Array<{ message?: { content?: string | null } }> }
-  )?.choices?.[0]?.message?.content;
-  console.log("AI CONTENT:", content);
-
   if (!res.ok) {
     console.error("[analyzeDesign] OpenAI HTTP 오류:", res.status, data);
     return null;
   }
 
+  const content = (
+    data as { choices?: Array<{ message?: { content?: string | null } }> }
+  )?.choices?.[0]?.message?.content;
+  console.log("AI CONTENT:", content);
+
   if (typeof content !== "string" || !content.trim()) {
     return null;
   }
 
+  const trimmed = content.trim();
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(content);
-    return normalizeParsed(parsed);
+    parsed = JSON.parse(trimmed);
   } catch {
     try {
-      const stripped = content
-        .trim()
+      const stripped = trimmed
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/i, "");
-      const parsed: unknown = JSON.parse(stripped);
-      return normalizeParsed(parsed);
+      parsed = JSON.parse(stripped);
     } catch {
       return null;
     }
   }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  return normalizeParsed(parsed);
 }

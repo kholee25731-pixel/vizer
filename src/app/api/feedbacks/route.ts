@@ -122,44 +122,38 @@ export async function POST(request: Request) {
       description !== "" ? description : rowDesc || meta.description.trim();
 
     console.log("BEFORE ANALYZE DESIGN");
-    const ai = await analyzeDesign({
+    const analysis = await analyzeDesign({
       image_url,
       description: designDescription,
       status: evalStatus,
       reason: evalReason,
     });
-    console.log("AI RAW RESULT:", ai);
+    console.log("AI RAW RESULT:", analysis);
 
-    let aiResult = ai;
-    if (!aiResult) {
-      const fail = "AI 분석 실패 (quota 초과)";
-      const failItem = { value: fail, role: "" };
-      aiResult = {
-        concept: { main: fail, keywords: [fail], summary: fail },
-        background: {
-          color: [failItem],
-          texture: [],
-          object: [],
-        },
-        typography: { font_style: [failItem] },
-        layout: { structure: [failItem] },
-        copywriting: { tone_and_wording: [failItem] },
-        key_visual: { focal_point: [failItem] },
-        feedback_alignment: { matched: [], mismatched: [fail] },
-      };
-    }
-
-    const result = await updateFeedbackAiWithClient(supabase, output_id, {
-      ai_background: JSON.stringify(aiResult.background),
-      ai_typography: JSON.stringify(aiResult.typography),
-      ai_copywriting: JSON.stringify(aiResult.copywriting),
-      ai_layout: JSON.stringify(aiResult.layout),
-      ai_key_visual: JSON.stringify(aiResult.key_visual),
-      ai_summary: JSON.stringify({
-        concept: aiResult.concept,
-        feedback_alignment: aiResult.feedback_alignment,
-      }),
-    });
+    const result = await updateFeedbackAiWithClient(
+      supabase,
+      output_id,
+      !analysis
+        ? {
+            ai_background: null,
+            ai_typography: null,
+            ai_layout: null,
+            ai_copywriting: null,
+            ai_key_visual: null,
+            ai_summary: null,
+          }
+        : {
+            ai_background: JSON.stringify(analysis.background),
+            ai_typography: JSON.stringify(analysis.typography),
+            ai_layout: JSON.stringify(analysis.layout),
+            ai_copywriting: JSON.stringify(analysis.copywriting),
+            ai_key_visual: JSON.stringify(analysis.key_visual),
+            ai_summary: JSON.stringify({
+              concept: analysis.concept,
+              feedback_alignment: analysis.feedback_alignment,
+            }),
+          },
+    );
 
     if (!result.ok) {
       return Response.json(

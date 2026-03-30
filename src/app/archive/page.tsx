@@ -106,18 +106,14 @@ function formatAiSummary(raw: string | null | undefined): ReactNode {
 
   const trimmed = String(raw).trim();
   if (!trimmed.startsWith("{")) {
-    return <p className="text-sm text-zinc-800">{trimmed}</p>;
+    return <p className="text-sm text-zinc-800">분석 없음</p>;
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    return (
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
-        {trimmed}
-      </p>
-    );
+    return <p className="text-sm text-zinc-800">분석 없음</p>;
   }
 
   if (typeof parsed !== "object" || parsed === null) {
@@ -252,7 +248,7 @@ function formatAiAnalysis(raw: unknown): string {
         const parsed: unknown = JSON.parse(trimmed);
 
         if (typeof parsed !== "object" || parsed === null) {
-          return raw;
+          return "분석 없음";
         }
 
         let result = "";
@@ -335,11 +331,11 @@ function formatAiAnalysis(raw: unknown): string {
 
         return result.trim() || "분석 없음";
       } catch {
-        return raw;
+        return "분석 없음";
       }
     }
 
-    return raw;
+    return "분석 없음";
   }
 
   return "분석 없음";
@@ -356,12 +352,12 @@ function formatAiSentence(raw: string | null | undefined): ReactNode {
   if (typeof raw === "string") {
     const trimmed = raw.trim();
     if (!trimmed.startsWith("{")) {
-      return <p>{trimmed}</p>;
+      return <p>분석 없음</p>;
     }
     try {
       value = JSON.parse(trimmed) as unknown;
     } catch {
-      return <p className="whitespace-pre-wrap">{trimmed}</p>;
+      return <p>분석 없음</p>;
     }
   }
 
