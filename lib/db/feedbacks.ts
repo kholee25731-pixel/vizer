@@ -24,9 +24,12 @@ export async function selectFeedbacksForProjectIds(
   projectIds: string[],
 ): Promise<Record<string, unknown>[]> {
   if (projectIds.length === 0) return [];
+  /** 리스트 부하 완화: AI 컬럼 제외(status는 content JSON에 있음) */
   const { data, error } = await supabase
     .from("feedbacks")
-    .select("*")
+    .select(
+      "id, project_id, content, image_url, description, created_at, deleted, deleted_at",
+    )
     .in("project_id", projectIds);
   if (error) {
     console.error("[feedbacks] select 실패:", error.message);
@@ -35,27 +38,28 @@ export async function selectFeedbacksForProjectIds(
   return (data ?? []) as Record<string, unknown>[];
 }
 
-function rowTextOptional(
-  row: Record<string, unknown>,
-  key: string,
-): string | undefined {
+/** DB `ai_*` text 컬럼 → 누락·공백은 null */
+function rowAiNullable(row: Record<string, unknown>, key: string): string | null {
   const v = row[key];
-  if (v == null) return undefined;
+  if (v == null) return null;
   const s = String(v).trim();
-  return s === "" ? undefined : s;
+  return s === "" ? null : s;
 }
 
 export function mapFeedbackRow(row: Record<string, unknown>): CreativeOutput {
   const meta = decodeFeedbackContent(String(row.content ?? ""));
   const deletedAtRaw = row.deleted_at;
-  return {
+  const a = row.image_url;
+  const b = row.design_image_data_url;
+  const picked =
+    (a != null && String(a).trim() !== "" ? String(a).trim() : "") ||
+    (b != null && String(b).trim() !== "" ? String(b).trim() : "") ||
+    null;
+  const o: CreativeOutput = {
     id: String(row.id ?? ""),
     projectId: String(row.project_id ?? ""),
     ...meta,
-    design_image_data_url:
-      row.image_url != null && String(row.image_url) !== ""
-        ? String(row.image_url)
-        : undefined,
+    image_url: picked,
     createdAt:
       typeof row.created_at === "string"
         ? row.created_at
@@ -63,13 +67,14 @@ export function mapFeedbackRow(row: Record<string, unknown>): CreativeOutput {
     deleted: Boolean(row.deleted),
     deletedAt:
       typeof deletedAtRaw === "string" ? deletedAtRaw : undefined,
-    ai_background: rowTextOptional(row, "ai_background"),
-    ai_typography: rowTextOptional(row, "ai_typography"),
-    ai_copywriting: rowTextOptional(row, "ai_copywriting"),
-    ai_layout: rowTextOptional(row, "ai_layout"),
-    ai_key_visual: rowTextOptional(row, "ai_key_visual"),
-    ai_summary: rowTextOptional(row, "ai_summary"),
+    ai_background: rowAiNullable(row, "ai_background"),
+    ai_typography: rowAiNullable(row, "ai_typography"),
+    ai_copywriting: rowAiNullable(row, "ai_copywriting"),
+    ai_layout: rowAiNullable(row, "ai_layout"),
+    ai_key_visual: rowAiNullable(row, "ai_key_visual"),
+    ai_summary: rowAiNullable(row, "ai_summary"),
   };
+  return o;
 }
 
 export async function insertFeedbackWithClient(
@@ -137,6 +142,13 @@ export async function updateFeedbackRow(
     image_url: string;
     deleted: boolean;
     deleted_at: string | null;
+    description: string | null;
+    ai_background: string | null;
+    ai_typography: string | null;
+    ai_copywriting: string | null;
+    ai_layout: string | null;
+    ai_key_visual: string | null;
+    ai_summary: string | null;
   }>,
 ): Promise<boolean> {
   const { error } = await supabase
@@ -148,6 +160,35 @@ export async function updateFeedbackRow(
     return false;
   }
   return true;
+}
+
+/** Bearer 클라이언트(RLS)로 AI 분석 컬럼만 갱신 후 행을 반환합니다. */
+export async function updateFeedbackAiWithClient(
+  client: SupabaseClient,
+  feedbackId: string,
+  patch: {
+    ai_background: string | null;
+    ai_typography: string | null;
+    ai_copywriting: string | null;
+    ai_layout: string | null;
+    ai_key_visual: string | null;
+    ai_summary: string | null;
+  },
+): Promise<
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; message?: string }
+> {
+  const { data, error } = await client
+    .from("feedbacks")
+    .update(patch)
+    .eq("id", feedbackId)
+    .select()
+    .single();
+  if (error || !data?.id) {
+    console.error("[feedbacks] AI 컬럼 update 실패:", error?.message);
+    return { ok: false, message: error?.message };
+  }
+  return { ok: true, row: data as Record<string, unknown> };
 }
 
 export async function deleteFeedbackRow(feedbackId: string): Promise<boolean> {

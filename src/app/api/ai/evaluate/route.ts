@@ -1,9 +1,11 @@
 import {
   evaluateDesignApproval,
   type AiEvaluateApiSuccessBody,
+  type SimilarPastCase,
 } from "@/lib/ai/evaluateDesignApproval";
 import {
   decodeFeedbackContent,
+  plainTextFromStoredAiSummary,
   type OutputStatus,
 } from "@/lib/db/codec";
 import { createSupabaseForBearer } from "@/lib/supabaseServer";
@@ -11,13 +13,14 @@ import { createSupabaseForBearer } from "@/lib/supabaseServer";
 export const runtime = "nodejs";
 
 /** DB에서 가져온 전역 피드백 풀 최소 개수 (NOT_ENOUGH_DATA) */
-const TOTAL_MIN_REQUIRED = 20;
+const TOTAL_MIN_REQUIRED = 10;
 /** 전역 피드백 풀 조회 상한 (최신순) */
 const FETCH_LIMIT = 100;
 /** 프롬프트에 넣는 과거 사례 최대 개수 */
 const FINAL_CASES_MAX = 100;
 
 export type PastCaseJsonRow = {
+  id: string;
   description: string;
   result: OutputStatus;
   reason: string;
@@ -34,14 +37,15 @@ function buildPastCasesJson(rows: Record<string, unknown>[]): string {
         : meta.description.trim();
     const reason =
       meta.reason?.trim() ||
-      (row.ai_summary != null && String(row.ai_summary).trim() !== ""
-        ? String(row.ai_summary).trim()
-        : "");
+      plainTextFromStoredAiSummary(
+        row.ai_summary != null ? String(row.ai_summary) : null,
+      );
     const tags =
       meta.tags && meta.tags.length > 0
         ? meta.tags.map((t) => String(t).trim()).filter(Boolean)
         : undefined;
     const rec: PastCaseJsonRow = {
+      id: String(row.id ?? ""),
       description: plainDesc || "(설명 없음)",
       result: meta.status,
       reason: reason || "(사유 없음)",
@@ -117,6 +121,70 @@ function rowSimilarToQuery(
   return false;
 }
 
+function rowPublicImageUrl(row: Record<string, unknown>): string | null {
+  const a = row.image_url;
+  if (a != null && String(a).trim() !== "") return String(a).trim();
+  return null;
+}
+
+function normMatch(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function feedbackRowMatchesCase(
+  row: Record<string, unknown>,
+  c: Pick<SimilarPastCase, "description" | "reason">,
+): boolean {
+  const meta = decodeFeedbackContent(String(row.content ?? ""));
+  const plainDesc =
+    row.description != null && String(row.description).trim() !== ""
+      ? String(row.description).trim()
+      : meta.description.trim();
+  const reason =
+    meta.reason?.trim() ||
+    plainTextFromStoredAiSummary(
+      row.ai_summary != null ? String(row.ai_summary) : null,
+    );
+  const dRow = normMatch(plainDesc || "(설명 없음)");
+  const rRow = normMatch(reason || "(사유 없음)");
+  const dC = normMatch(c.description);
+  const rC = normMatch(c.reason);
+  if (dRow === dC && rRow === rC) return true;
+  if (dRow.length >= 8 && dC.length >= 8 && (dRow.includes(dC) || dC.includes(dRow))) {
+    return rRow === rC || rRow.includes(rC) || rC.includes(rRow);
+  }
+  return false;
+}
+
+function enrichSimilarCasesFromRows(
+  cases: SimilarPastCase[],
+  rows: Record<string, unknown>[],
+): SimilarPastCase[] {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const id = String(r.id ?? "").trim();
+    if (id) byId.set(id, r);
+  }
+  return cases.map((c) => {
+    let row: Record<string, unknown> | undefined;
+    if (c.feedback_id && byId.has(c.feedback_id)) {
+      row = byId.get(c.feedback_id);
+    }
+    if (!row) {
+      row = rows.find((r) => feedbackRowMatchesCase(r, c));
+    }
+    if (!row) {
+      return { ...c, image_url: c.image_url ?? null };
+    }
+    const id = String(row.id ?? "").trim();
+    return {
+      ...c,
+      feedback_id: id || c.feedback_id,
+      image_url: rowPublicImageUrl(row) ?? c.image_url ?? null,
+    };
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const authHeader = request.headers.get("authorization");
@@ -180,7 +248,7 @@ export async function POST(request: Request) {
     const { data: feedbackRows, error: fbError } = await supabase
       .from("feedbacks")
       .select(
-        "id, content, description, ai_summary, created_at, deleted, project_id",
+        "id, content, description, ai_summary, created_at, deleted, project_id, image_url",
       )
       .eq("deleted", false)
       .order("created_at", { ascending: false })
@@ -241,12 +309,17 @@ export async function POST(request: Request) {
       );
     }
 
+    const similarWithThumbs = enrichSimilarCasesFromRows(
+      evaluated.similar_cases,
+      finalCases,
+    );
+
     const successBody: AiEvaluateApiSuccessBody = {
       approval_score: Math.round(evaluated.approval_score),
       prediction: evaluated.prediction,
       reasoning: evaluated.reasoning,
       risks: evaluated.risks,
-      similar_cases: evaluated.similar_cases,
+      similar_cases: similarWithThumbs,
     };
     return Response.json(successBody);
   } catch (e) {

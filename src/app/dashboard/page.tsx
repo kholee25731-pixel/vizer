@@ -139,9 +139,9 @@ export default function DashboardPage() {
                       className="flex items-start gap-3 rounded-md border border-zinc-100 bg-white p-3"
                     >
                       <div className="aspect-square w-16 shrink-0 overflow-hidden rounded-md bg-zinc-100">
-                        {item.design_image_data_url ? (
+                        {item.image_url ? (
                           <img
-                            src={item.design_image_data_url}
+                            src={item.image_url}
                             alt=""
                             className="h-full w-full object-cover"
                           />

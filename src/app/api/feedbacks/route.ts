@@ -1,11 +1,14 @@
 import { analyzeDesign } from "@/lib/ai/analyzeDesign";
-import { encodeFeedbackContent } from "@/lib/db/codec";
-import { insertFeedbackWithClient } from "@/lib/db/feedbacks";
+import { decodeFeedbackContent } from "@/lib/db/codec";
+import {
+  updateFeedbackAiWithClient,
+} from "@/lib/db/feedbacks";
 import { createSupabaseForBearer } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  console.log("API ROUTE HIT");
   try {
     const authHeader = request.headers.get("authorization");
     const token = authHeader?.startsWith("Bearer ")
@@ -35,6 +38,9 @@ export async function POST(request: Request) {
       project_id?: unknown;
       image_url?: unknown;
       description?: unknown;
+      output_id?: unknown;
+      status?: unknown;
+      reason?: unknown;
     };
     try {
       body = await request.json();
@@ -45,19 +51,32 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log("BODY:", body);
+
     const project_id =
       typeof body.project_id === "string" ? body.project_id.trim() : "";
+    const output_id =
+      typeof body.output_id === "string" ? body.output_id.trim() : "";
     const description =
       typeof body.description === "string" ? body.description.trim() : "";
     const image_url =
       typeof body.image_url === "string" ? body.image_url.trim() : "";
 
+    console.log("PROJECT ID:", project_id);
     if (!project_id) {
       return Response.json(
         { error: "project_id가 필요합니다." },
         { status: 400 },
       );
     }
+    console.log("OUTPUT ID:", output_id);
+    if (!output_id) {
+      return Response.json(
+        { error: "output_id가 필요합니다." },
+        { status: 400 },
+      );
+    }
+    console.log("IMAGE / DESC:", image_url, description);
     if (!image_url && !description) {
       return Response.json(
         { error: "image_url 또는 description 중 하나는 필요합니다." },
@@ -65,33 +84,86 @@ export async function POST(request: Request) {
       );
     }
 
-    const ai = await analyzeDesign({ image_url, description });
+    const { data: existing, error: existingErr } = await supabase
+      .from("feedbacks")
+      .select("id, project_id, content, description")
+      .eq("id", output_id)
+      .maybeSingle();
 
-    const content = encodeFeedbackContent({
-      output_type: "design",
-      status: "Approved",
-      reason: "",
-      description: description || "(시안 업로드)",
-      tags: [],
-      copy_text: undefined,
+    console.log("EXISTING:", existing);
+    if (existingErr || !existing) {
+      return Response.json(
+        { error: "피드백을 찾을 수 없습니다." },
+        { status: 404 },
+      );
+    }
+    if (String(existing.project_id ?? "") !== project_id) {
+      return Response.json(
+        { error: "project_id가 일치하지 않습니다." },
+        { status: 400 },
+      );
+    }
+
+    const row = existing as Record<string, unknown>;
+    const meta = decodeFeedbackContent(String(row.content ?? ""));
+    let evalStatus: "Approved" | "Rejected" = meta.status;
+    if (body.status === "Approved" || body.status === "Rejected") {
+      evalStatus = body.status;
+    }
+    let evalReason = String(meta.reason ?? "").trim();
+    if (typeof body.reason === "string" && body.reason.trim() !== "") {
+      evalReason = body.reason.trim();
+    }
+    const rowDesc =
+      row.description != null && String(row.description).trim() !== ""
+        ? String(row.description).trim()
+        : "";
+    const designDescription =
+      description !== "" ? description : rowDesc || meta.description.trim();
+
+    console.log("BEFORE ANALYZE DESIGN");
+    const ai = await analyzeDesign({
+      image_url,
+      description: designDescription,
+      status: evalStatus,
+      reason: evalReason,
     });
+    console.log("AI RAW RESULT:", ai);
 
-    const result = await insertFeedbackWithClient(supabase, {
-      project_id,
-      content,
-      image_url: image_url || "",
-      description: description || null,
-      ai_background: ai?.background ?? null,
-      ai_typography: ai?.typography ?? null,
-      ai_copywriting: ai?.copywriting ?? null,
-      ai_layout: ai?.layout ?? null,
-      ai_key_visual: ai?.key_visual ?? null,
-      ai_summary: ai?.summary ?? null,
+    let aiResult = ai;
+    if (!aiResult) {
+      const fail = "AI 분석 실패 (quota 초과)";
+      const failItem = { value: fail, role: "" };
+      aiResult = {
+        concept: { main: fail, keywords: [fail], summary: fail },
+        background: {
+          color: [failItem],
+          texture: [],
+          object: [],
+        },
+        typography: { font_style: [failItem] },
+        layout: { structure: [failItem] },
+        copywriting: { tone_and_wording: [failItem] },
+        key_visual: { focal_point: [failItem] },
+        feedback_alignment: { matched: [], mismatched: [fail] },
+      };
+    }
+
+    const result = await updateFeedbackAiWithClient(supabase, output_id, {
+      ai_background: JSON.stringify(aiResult.background),
+      ai_typography: JSON.stringify(aiResult.typography),
+      ai_copywriting: JSON.stringify(aiResult.copywriting),
+      ai_layout: JSON.stringify(aiResult.layout),
+      ai_key_visual: JSON.stringify(aiResult.key_visual),
+      ai_summary: JSON.stringify({
+        concept: aiResult.concept,
+        feedback_alignment: aiResult.feedback_alignment,
+      }),
     });
 
     if (!result.ok) {
       return Response.json(
-        { error: "피드백 저장에 실패했습니다.", detail: result.message },
+        { error: "피드백 AI 갱신에 실패했습니다.", detail: result.message },
         { status: 500 },
       );
     }

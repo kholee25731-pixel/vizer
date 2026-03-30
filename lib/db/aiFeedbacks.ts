@@ -41,9 +41,9 @@ export async function selectAiFeedbacksForProjectIds(
 export function mapAiFeedbackRow(row: AiFeedbackRow): AiFeedbackHistoryEntry {
   const meta = decodeAiFeedbackContent(String(row.content ?? ""));
   const img =
-    row.image_url != null && String(row.image_url) !== ""
-      ? String(row.image_url)
-      : undefined;
+    row.image_url != null && String(row.image_url).trim() !== ""
+      ? String(row.image_url).trim()
+      : null;
   if (!meta) {
     return {
       id: String(row.id),
@@ -51,6 +51,7 @@ export function mapAiFeedbackRow(row: AiFeedbackRow): AiFeedbackHistoryEntry {
       projectName: "",
       fileName: "",
       description: String(row.content ?? ""),
+      image_url: img,
       summaryReason: "",
       status: "Approved",
       approvalProbability: 0,
@@ -58,7 +59,6 @@ export function mapAiFeedbackRow(row: AiFeedbackRow): AiFeedbackHistoryEntry {
         typeof row.created_at === "string"
           ? row.created_at
           : new Date().toISOString(),
-      design_image_data_url: img,
     };
   }
   return {
@@ -67,7 +67,7 @@ export function mapAiFeedbackRow(row: AiFeedbackRow): AiFeedbackHistoryEntry {
     projectName: meta.projectName,
     fileName: meta.fileName,
     description: "",
-    design_image_data_url: img,
+    image_url: img,
     summaryReason: meta.summaryReason,
     aiExplanation: meta.aiExplanation,
     status: meta.status,

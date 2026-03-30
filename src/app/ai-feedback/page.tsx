@@ -16,6 +16,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { buildFeedbackStorageFileName } from "@/lib/storage/feedbackStorageFileName";
 import { supabase } from "@/lib/supabase";
 import { CustomDropdown } from "../../components/CustomDropdown";
 import {
@@ -30,7 +31,7 @@ const AI_FEEDBACK_EXPLANATION_PARAGRAPHS = [
   "다만 텍스트 밀도가 높은 영역이 있어 가독성이 일부 떨어질 수 있습니다.",
 ] as const;
 
-const MIN_FEEDBACK_FOR_AI = 20;
+const MIN_FEEDBACK_FOR_AI = 10;
 
 function historyExplanationText(entry: AiFeedbackHistoryEntry): string {
   const t = entry.aiExplanation?.trim();
@@ -51,6 +52,497 @@ function approvalProbabilityTier(
 function historyTier(entry: AiFeedbackHistoryEntry): "low" | "mid" | "high" {
   if (entry.prediction) return entry.prediction;
   return approvalProbabilityTier(entry.approvalProbability);
+}
+
+function SimilarCaseGridCard({
+  c,
+  onSelect,
+}: {
+  c: AiSimilarPastCase;
+  onSelect: (c: AiSimilarPastCase) => void;
+}) {
+  const approved = c.result === "Approved";
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(c)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(c);
+        }
+      }}
+      className="flex cursor-pointer gap-3 overflow-hidden rounded-lg border border-zinc-200 bg-white p-2.5 shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+    >
+      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-zinc-100">
+        {c.image_url ? (
+          <img
+            src={c.image_url}
+            alt=""
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center px-1 text-center text-[10px] text-zinc-400">
+            없음
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 py-0.5">
+        <p className="line-clamp-2 text-[11px] leading-snug text-zinc-600">
+          {c.description}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className={`inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium ${
+              approved
+                ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80"
+                : "bg-rose-50 text-rose-800 ring-1 ring-rose-200/80"
+            }`}
+          >
+            {approved ? "승인" : "거절"}
+          </span>
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-zinc-800">
+          {c.reason}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function feedbackDetailIndicator(entry: AiFeedbackHistoryEntry) {
+  const tier = historyTier(entry);
+  if (tier === "high") {
+    return {
+      label: "승인 가능성 높음",
+      tone: "emerald",
+      icon: CheckCircle2,
+    } as const;
+  }
+  if (tier === "mid") {
+    return {
+      label: "보통",
+      tone: "amber",
+      icon: AlertTriangle,
+    } as const;
+  }
+  return {
+    label: "거절 위험",
+    tone: "rose",
+    icon: XCircle,
+  } as const;
+}
+
+function AiFeedbackDetailModal({
+  entry,
+  onClose,
+  onPickSimilar,
+}: {
+  entry: AiFeedbackHistoryEntry;
+  onClose: () => void;
+  onPickSimilar?: (c: AiSimilarPastCase) => void;
+}) {
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const indicator = feedbackDetailIndicator(entry);
+  const Icon = indicator.icon;
+  const tier = historyTier(entry);
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        role="presentation"
+        onClick={onClose}
+      >
+        <div
+          className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ai-feedback-detail-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            aria-label="닫기"
+            onClick={onClose}
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </button>
+
+        <div className="mb-5 flex gap-4 pr-8">
+          {entry.image_url ? (
+            <button
+              type="button"
+              className="h-40 w-40 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 ring-offset-2 transition hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+              aria-label="이미지 크게 보기"
+              onClick={() => setLightboxUrl(entry.image_url)}
+            >
+              <img
+                src={entry.image_url}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            </button>
+          ) : (
+            <div className="flex h-40 w-40 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 px-1 text-center text-[11px] text-zinc-400">
+              이미지 없음
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2
+              id="ai-feedback-detail-title"
+              className="text-lg font-semibold text-zinc-900"
+            >
+              AI 분석 결과
+            </h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              과거 승인·거절 사례만 근거로 예측 · gpt-4o
+            </p>
+            <p className="mt-2 text-xs text-zinc-600">
+              <span className="font-medium text-zinc-800">프로젝트</span>{" "}
+              {entry.projectName || "—"}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-600">
+              <span className="font-medium text-zinc-800">요청일</span>{" "}
+              {entry.createdAt.slice(0, 10)}
+            </p>
+            {entry.description.trim() ? (
+              <p className="mt-2 text-xs leading-relaxed text-zinc-600">
+                <span className="font-medium text-zinc-800">시안 설명</span>{" "}
+                {entry.description}
+              </p>
+            ) : null}
+            {entry.fileName ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                파일: {entry.fileName}
+              </p>
+            ) : null}
+            <p className="mt-2 text-xs text-zinc-600">
+              <span className="font-medium text-zinc-800">AI 판단 경향</span>{" "}
+              {entry.status === "Approved" ? "승인 쪽" : "거절 쪽"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-5 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+            <p className="text-xs font-medium text-zinc-500">승인 예상률</p>
+            <p className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900">
+              {Math.round(entry.approvalProbability * 100)}%
+            </p>
+            <p className="mt-2 text-xs text-zinc-500">
+              예측 구간:{" "}
+              {tier === "high"
+                ? "높음 (67–100)"
+                : tier === "mid"
+                  ? "중간 (34–66)"
+                  : "낮음 (0–33)"}
+            </p>
+          </div>
+          <div
+            className={`rounded-xl border p-4 ${
+              indicator.tone === "emerald"
+                ? "border-emerald-200 bg-emerald-50"
+                : indicator.tone === "amber"
+                  ? "border-amber-200 bg-amber-50"
+                  : "border-rose-200 bg-rose-50"
+            }`}
+          >
+            <p className="text-xs font-medium text-zinc-500">피드백 예측</p>
+            <div className="mt-2 flex items-center gap-2">
+              <Icon
+                className={`h-5 w-5 ${
+                  indicator.tone === "emerald"
+                    ? "text-emerald-700"
+                    : indicator.tone === "amber"
+                      ? "text-amber-700"
+                      : "text-rose-700"
+                }`}
+              />
+              <p
+                className={`text-sm font-semibold ${
+                  indicator.tone === "emerald"
+                    ? "text-emerald-800"
+                    : indicator.tone === "amber"
+                      ? "text-amber-800"
+                      : "text-rose-800"
+                }`}
+              >
+                {indicator.label}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <section className="mb-5">
+          <h3 className="text-sm font-semibold text-zinc-900">AI 피드백 설명</h3>
+          <div className="mt-2 rounded-xl border border-zinc-100 bg-zinc-50 p-4 text-sm leading-relaxed text-zinc-800">
+            {entry.aiExplanation?.trim() ? (
+              entry.aiExplanation
+                .split(/\n\n+/)
+                .map((para) => para.trim())
+                .filter(Boolean)
+                .map((para, i) => (
+                  <p key={i} className={i > 0 ? "mt-3" : undefined}>
+                    {para}
+                  </p>
+                ))
+            ) : (
+              AI_FEEDBACK_EXPLANATION_PARAGRAPHS.map((para, i) => (
+                <p key={i} className={i > 0 ? "mt-3" : undefined}>
+                  {para}
+                </p>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="mb-5">
+          <h3 className="text-sm font-semibold text-zinc-900">위험 신호</h3>
+          <ul className="mt-3 space-y-2 text-sm text-zinc-800">
+            {entry.risks?.length ? (
+              entry.risks.map((t) => (
+                <li key={t} className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>{t}</span>
+                </li>
+              ))
+            ) : (
+              <li className="flex items-center gap-2 text-zinc-500">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-zinc-400" />
+                <span>명시된 위험 요소 없음</span>
+              </li>
+            )}
+          </ul>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            유사 사례
+          </h3>
+          <div className="mt-2 space-y-2">
+            {entry.similarCases?.length ? (
+              entry.similarCases.map((c, idx) => {
+                const approved = c.result === "Approved";
+                const pick = () => onPickSimilar?.(c);
+                return (
+                  <article
+                    key={c.feedback_id ?? `${c.description}-${c.reason}-${idx}`}
+                    role={onPickSimilar ? "button" : undefined}
+                    tabIndex={onPickSimilar ? 0 : undefined}
+                    onClick={onPickSimilar ? pick : undefined}
+                    onKeyDown={
+                      onPickSimilar
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              pick();
+                            }
+                          }
+                        : undefined
+                    }
+                    className={`flex gap-2.5 overflow-hidden rounded-lg border border-zinc-200/90 bg-white p-2 ${
+                      onPickSimilar
+                        ? "cursor-pointer transition-colors hover:bg-zinc-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+                        : ""
+                    }`}
+                  >
+                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100">
+                      {c.image_url ? (
+                        <img
+                          src={c.image_url}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center px-0.5 text-center text-[9px] text-zinc-400">
+                          없음
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1 py-0.5">
+                      <p className="line-clamp-2 text-[11px] leading-snug text-zinc-600">
+                        {c.description}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span
+                          className={`inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium ${
+                            approved
+                              ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80"
+                              : "bg-rose-50 text-rose-800 ring-1 ring-rose-200/80"
+                          }`}
+                        >
+                          {approved ? "승인" : "거절"}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-zinc-800">
+                        “{c.reason}”
+                      </p>
+                    </div>
+                  </article>
+                );
+              })
+            ) : (
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                유사하게 매칭된 과거 사례가 없습니다. 피드백 아카이브에 사례를 더
+                쌓으면 비교에 활용됩니다.
+              </p>
+            )}
+          </div>
+        </section>
+        </div>
+      </div>
+
+      {lightboxUrl ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4"
+          role="presentation"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            aria-label="이미지 닫기"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <X className="h-6 w-6" aria-hidden />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt=""
+            className="max-h-[90vh] max-w-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function SimilarCaseDetailModal({
+  data,
+  projectName,
+  onClose,
+}: {
+  data: AiSimilarPastCase;
+  projectName: string;
+  onClose: () => void;
+}) {
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const approved = data.result === "Approved";
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[55] flex items-center justify-center bg-black/50 p-4"
+        role="presentation"
+        onClick={onClose}
+      >
+        <div
+          className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="similar-case-detail-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            aria-label="닫기"
+            onClick={onClose}
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </button>
+
+          <h2
+            id="similar-case-detail-title"
+            className="pr-10 text-lg font-semibold text-zinc-900"
+          >
+            유사 사례 · 피드백
+          </h2>
+          {projectName ? (
+            <p className="mt-2 text-sm text-zinc-600">
+              <span className="font-medium text-zinc-800">프로젝트</span>{" "}
+              {projectName}
+            </p>
+          ) : null}
+
+          <div className="mt-4">
+            {data.image_url ? (
+              <button
+                type="button"
+                className="mx-auto block h-40 w-40 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+                aria-label="이미지 크게 보기"
+                onClick={() => setLightboxUrl(data.image_url!)}
+              >
+                <img
+                  src={data.image_url}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              </button>
+            ) : (
+              <div className="flex h-40 w-40 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-sm text-zinc-400">
+                이미지 없음
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-3 border-t border-zinc-100 pt-4">
+            <div>
+              <p className="text-xs font-medium text-zinc-500">시안 설명</p>
+              <p className="mt-1 text-sm leading-relaxed text-zinc-800">
+                {data.description}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-zinc-500">실제 결과</p>
+              <span
+                className={`mt-1 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                  approved
+                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                    : "bg-rose-50 text-rose-800 ring-1 ring-rose-200"
+                }`}
+              >
+                {approved ? "승인" : "거절"}
+              </span>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-zinc-500">피드백 사유</p>
+              <p className="mt-1 text-sm font-medium leading-relaxed text-zinc-900">
+                “{data.reason}”
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {lightboxUrl ? (
+        <div
+          className="fixed inset-0 z-[65] flex items-center justify-center bg-black/85 p-4"
+          role="presentation"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            aria-label="이미지 닫기"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <X className="h-6 w-6" aria-hidden />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt=""
+            className="max-h-[90vh] max-w-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export default function AiFeedbackPage() {
@@ -87,6 +579,10 @@ export default function AiFeedbackPage() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [latestSessionFeedback, setLatestSessionFeedback] =
     useState<AiFeedbackHistoryEntry | null>(null);
+  const [selectedFeedback, setSelectedFeedback] =
+    useState<AiFeedbackHistoryEntry | null>(null);
+  const [similarCaseDetail, setSimilarCaseDetail] =
+    useState<AiSimilarPastCase | null>(null);
 
   useEffect(() => {
     if (!selectedFile && !designDescription.trim()) {
@@ -129,8 +625,7 @@ export default function AiFeedbackPage() {
       return;
     }
     const desc = designDescription.trim();
-    const imageUrl = preview?.trim() ?? "";
-    if (!desc && !imageUrl) {
+    if (!desc && !selectedFile) {
       setFeedbackError("시안 이미지를 올리거나 시안 설명을 입력해주세요.");
       return;
     }
@@ -140,6 +635,30 @@ export default function AiFeedbackPage() {
     } = await supabase.auth.getSession();
     if (!session?.access_token) {
       setFeedbackError("로그인이 필요합니다.");
+      return;
+    }
+
+    let imageUrl = "";
+    if (selectedFile) {
+      const fileName = buildFeedbackStorageFileName(selectedFile.name);
+      const filePath = `evaluations/${fileName}`;
+      const { error: uploadError } = await supabase.storage
+        .from("images")
+        .upload(filePath, selectedFile);
+      if (uploadError) {
+        setFeedbackError(
+          uploadError.message || "이미지 업로드에 실패했습니다.",
+        );
+        return;
+      }
+      const { data: publicUrlData } = supabase.storage
+        .from("images")
+        .getPublicUrl(filePath);
+      imageUrl = publicUrlData.publicUrl;
+    }
+
+    if (!desc && !imageUrl) {
+      setFeedbackError("시안 이미지를 올리거나 시안 설명을 입력해주세요.");
       return;
     }
 
@@ -227,12 +746,21 @@ export default function AiFeedbackPage() {
               const r = String(o.reason ?? "").trim();
               const res: AiSimilarPastCase["result"] =
                 o.result === "Rejected" ? "Rejected" : "Approved";
+              const fid = String(o.case_id ?? o.feedback_id ?? "").trim();
+              const imgRaw = o.image_url;
+              const image_url =
+                imgRaw != null && String(imgRaw).trim() !== ""
+                  ? String(imgRaw).trim()
+                  : null;
               if (!d && !r) return null;
-              return {
+              const one: AiSimilarPastCase = {
                 description: d || "(설명 없음)",
                 result: res,
                 reason: r || "(사유 없음)",
-              } satisfies AiSimilarPastCase;
+              };
+              if (fid) one.feedback_id = fid;
+              if (image_url) one.image_url = image_url;
+              return one;
             })
             .filter((x): x is AiSimilarPastCase => x != null)
             .slice(0, 3)
@@ -252,7 +780,7 @@ export default function AiFeedbackPage() {
         projectName: selectedProjectName,
         fileName: selectedFileName ?? "",
         description: desc,
-        design_image_data_url: imageUrl || undefined,
+        image_url: imageUrl ? imageUrl : null,
         summaryReason,
         aiExplanation: reasoning /* API reasoning */,
         status: approvalProb >= 0.5 ? "Approved" : "Rejected",
@@ -274,7 +802,7 @@ export default function AiFeedbackPage() {
   }, [
     designDescription,
     prependAiFeedbackHistory,
-    preview,
+    selectedFile,
     selectedFileName,
     selectedProjectId,
     selectedProjectName,
@@ -299,6 +827,17 @@ export default function AiFeedbackPage() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 10);
   }, [state.aiFeedbackHistory]);
+
+  const similarCaseProjectName = useMemo(() => {
+    if (!similarCaseDetail?.feedback_id) return "";
+    const o = state.outputs.find(
+      (x) => x.id === similarCaseDetail.feedback_id && !x.deleted,
+    );
+    if (!o) return "";
+    return (
+      state.projects.find((p) => p.id === o.projectId && !p.deleted)?.name ?? ""
+    );
+  }, [similarCaseDetail, state.outputs, state.projects]);
 
   const indicator = useMemo(() => {
     if (indicatorTier === "high") {
@@ -502,7 +1041,7 @@ export default function AiFeedbackPage() {
                 </h2>
                 <p className="mt-1 text-xs text-zinc-500">
                   {latestSessionFeedback
-                    ? "과거 승인·거절 사례만 근거로 예측 · gpt-4o-mini"
+                    ? "과거 승인·거절 사례만 근거로 예측 · gpt-4o"
                     : feedbackLoading
                       ? "분석 중…"
                       : "프로젝트·시안을 보내 AI 피드백을 받습니다."}
@@ -529,11 +1068,11 @@ export default function AiFeedbackPage() {
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-                <p className="text-xs font-medium text-zinc-500">승인 점수</p>
+                <p className="text-xs font-medium text-zinc-500">승인 예상률</p>
                 <p className="mt-2 text-4xl font-semibold tracking-tight text-zinc-900">
                   {feedbackLoading && !latestSessionFeedback
                     ? "—"
-                    : `${Math.round(approvalProbability * 100)}점`}
+                    : `${Math.round(approvalProbability * 100)}%`}
                 </p>
                 {latestSessionFeedback?.prediction ? (
                   <p className="mt-2 text-xs text-zinc-500">
@@ -640,41 +1179,19 @@ export default function AiFeedbackPage() {
           {/* SECTION 5 — similar_cases (API) */}
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-900">유사 사례</h2>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="mt-3 flex max-w-lg flex-col gap-2">
               {feedbackLoading && !latestSessionFeedback ? (
-                <p className="col-span-full text-sm text-zinc-500">분석 중…</p>
+                <p className="text-sm text-zinc-500">분석 중…</p>
               ) : latestSessionFeedback?.similarCases?.length ? (
-                latestSessionFeedback.similarCases.map((c, idx) => {
-                  const approved = c.result === "Approved";
-                  return (
-                    <article
-                      key={`${c.description}-${c.reason}-${idx}`}
-                      className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
-                    >
-                      <div className="flex min-h-[4.5rem] items-center border-b border-zinc-100 bg-zinc-50 px-4 py-3">
-                        <p className="line-clamp-3 text-xs leading-relaxed text-zinc-700">
-                          {c.description}
-                        </p>
-                      </div>
-                      <div className="flex flex-1 flex-col gap-2 p-4">
-                        <span
-                          className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            approved
-                              ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                              : "bg-rose-50 text-rose-800 ring-1 ring-rose-200"
-                          }`}
-                        >
-                          {approved ? "승인" : "거절"}
-                        </span>
-                        <p className="text-sm font-medium text-zinc-900">
-                          “{c.reason}”
-                        </p>
-                      </div>
-                    </article>
-                  );
-                })
+                latestSessionFeedback.similarCases.map((c, idx) => (
+                  <SimilarCaseGridCard
+                    key={c.feedback_id ?? `${c.description}-${idx}`}
+                    c={c}
+                    onSelect={setSimilarCaseDetail}
+                  />
+                ))
               ) : (
-                <p className="col-span-full text-sm text-zinc-500">
+                <p className="text-sm text-zinc-500">
                   유사하게 매칭된 과거 사례가 없습니다. 피드백 아카이브에 사례를
                   더 쌓으면 비교에 활용됩니다.
                 </p>
@@ -709,12 +1226,21 @@ export default function AiFeedbackPage() {
               return (
                 <article
                   key={item.id}
-                  className="flex h-32 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedFeedback(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedFeedback(item);
+                    }
+                  }}
+                  className="flex h-32 cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
                 >
                   <div className="h-32 w-32 shrink-0 overflow-hidden bg-zinc-100">
-                    {item.design_image_data_url ? (
+                    {item.image_url ? (
                       <img
-                        src={item.design_image_data_url}
+                        src={item.image_url}
                         alt=""
                         className="h-full w-full object-cover"
                       />
@@ -747,7 +1273,7 @@ export default function AiFeedbackPage() {
                               aria-hidden
                             />
                           )}
-                          <span>승인 점수 {pct}점</span>
+                          <span>승인 예상률 {pct}%</span>
                         </div>
                         <span className="min-w-0 truncate text-sm font-medium text-zinc-900">
                           {item.projectName}
@@ -775,6 +1301,22 @@ export default function AiFeedbackPage() {
           </p>
         )}
       </section>
+
+      {selectedFeedback ? (
+        <AiFeedbackDetailModal
+          entry={selectedFeedback}
+          onClose={() => setSelectedFeedback(null)}
+          onPickSimilar={(c) => setSimilarCaseDetail(c)}
+        />
+      ) : null}
+
+      {similarCaseDetail ? (
+        <SimilarCaseDetailModal
+          data={similarCaseDetail}
+          projectName={similarCaseProjectName}
+          onClose={() => setSimilarCaseDetail(null)}
+        />
+      ) : null}
     </div>
   );
 }

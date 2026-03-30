@@ -27,6 +27,55 @@ export function encodeFeedbackContent(o: CreativeOutputFields): string {
   return JSON.stringify(meta);
 }
 
+/**
+ * `ai_summary` 컬럼 값: 레거시(concept만) 또는 `{ concept, feedback_alignment }`.
+ * 검색·과거 사례 프롬프트 등에서 사람이 읽을 한 덩어리 텍스트로 평탄화.
+ */
+export function plainTextFromStoredAiSummary(
+  raw: string | null | undefined,
+): string {
+  if (raw == null) return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+  try {
+    const p = JSON.parse(s) as Record<string, unknown>;
+    if (
+      p &&
+      typeof p.concept === "object" &&
+      p.concept !== null &&
+      !Array.isArray(p.concept)
+    ) {
+      const c = p.concept as Record<string, unknown>;
+      const parts = [
+        String(c.main ?? "").trim(),
+        String(c.summary ?? "").trim(),
+        ...(Array.isArray(c.keywords)
+          ? c.keywords.map((x) => String(x ?? "").trim()).filter(Boolean)
+          : []),
+      ].filter(Boolean);
+      if (parts.length > 0) return parts.join(" ");
+    }
+    if (
+      p &&
+      typeof p === "object" &&
+      ("main" in p || "summary" in p || "keywords" in p)
+    ) {
+      const main = String((p as { main?: unknown }).main ?? "").trim();
+      const summary = String((p as { summary?: unknown }).summary ?? "").trim();
+      const kws = Array.isArray((p as { keywords?: unknown }).keywords)
+        ? ((p as { keywords: unknown[] }).keywords ?? [])
+            .map((x) => String(x ?? "").trim())
+            .filter(Boolean)
+        : [];
+      const out = [main, summary, ...kws].filter(Boolean).join(" ");
+      if (out) return out;
+    }
+  } catch {
+    /* 본문이 JSON이 아니면 그대로 */
+  }
+  return s;
+}
+
 export function decodeFeedbackContent(content: string): CreativeOutputFields {
   try {
     const p = JSON.parse(content) as Partial<FeedbackMeta> & {

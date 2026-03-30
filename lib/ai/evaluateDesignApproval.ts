@@ -1,4 +1,8 @@
 export type SimilarPastCase = {
+  /** 과거 피드백 행 id — 클라이언트/썸네일 매칭용 */
+  feedback_id?: string;
+  /** Supabase `feedbacks.image_url` enrich 시 설정 */
+  image_url?: string | null;
   description: string;
   result: "Approved" | "Rejected";
   reason: string;
@@ -60,8 +64,16 @@ function normalizeSimilarCases(
     const description = String(o.description ?? "").trim();
     const reason = String(o.reason ?? "").trim();
     const r = o.result === "Rejected" ? "Rejected" : "Approved";
+    const fid = String(o.case_id ?? o.feedback_id ?? "").trim();
+    const imgRaw = o.image_url;
+    const image_url =
+      imgRaw != null && String(imgRaw).trim() !== ""
+        ? String(imgRaw).trim()
+        : null;
     if (!description && !reason) continue;
     out.push({
+      ...(fid ? { feedback_id: fid } : {}),
+      ...(image_url ? { image_url } : {}),
       description: description || "(설명 없음)",
       result: r,
       reason: reason || "(사유 없음)",
@@ -96,45 +108,40 @@ export type EvaluateDesignApprovalInput = {
 };
 
 function buildUserPrompt(description: string, past_cases_json: string): string {
-  const desc = description.trim() || "(none)";
-  return `You are a design approval evaluator.
+  const desc = description.trim() || "(없음)";
+  return `당신은 디자인 승인 여부를 과거 사례만 근거로 평가합니다.
 
-Your job is to predict whether a design will be approved,
-based ONLY on past cases.
+일반적인 디자인 조언은 하지 마세요.
 
-Do NOT give general design advice.
+중요: JSON 안의 사람이 읽는 문자열(reasoning, risks 배열 각 항목, similar_cases[].reason)은 반드시 한국어로만 작성하세요. 영어 사용 금지.
+(similar_cases[].description은 과거 사례 JSON에 적힌 그대로 복사해도 됩니다.)
 
 ---
 
-Past cases:
+과거 사례:
 ${past_cases_json}
 
 ---
 
-New design:
-- description: ${desc}
+새 시안:
+- 설명: ${desc}
 
 ---
 
-Task:
+작업:
 
-1. Predict approval score (0-100)
-2. Classify:
-   - low (≤33)
-   - mid (34~66)
-   - high (≥67)
-
-3. Explain why (based on past patterns)
-
-4. List risks (specific rejection reasons)
-
-5. Select 3 most similar past cases:
-   - include result (Approved / Rejected)
-   - include reason
+1. 승인 점수 0–100 예측
+2. 구간 분류: low(≤33) · mid(34~66) · high(≥67)
+3. 위 예측 근거를 과거 패턴에 기반해 한국어로 reasoning에 서술
+4. 거절 위험이 있다면 risks에 한국어로 구체적 사유 나열
+5. 가장 유사한 과거 사례 최대 3개:
+   - 선택한 사례의 "id"를 case_id에 그대로 복사
+   - description·result는 사례와 동일
+   - reason: 해당 사례와 새 시안의 유사점·비교를 한국어로 짧게
 
 ---
 
-Return ONLY JSON:
+오직 JSON만 반환:
 
 {
   "approval_score": number,
@@ -143,6 +150,7 @@ Return ONLY JSON:
   "risks": [],
   "similar_cases": [
     {
+      "case_id": "",
       "description": "",
       "result": "Approved" | "Rejected",
       "reason": ""
@@ -171,7 +179,7 @@ export async function evaluateDesignApproval({
   if (img) {
     userText += `
 
-Note: A design image is attached. Use it only to relate this draft to patterns implied by the past cases (do not give generic design tips).`;
+참고: 시안 이미지가 첨부되었습니다. 과거 사례에서 드러나는 패턴과만 연결해 해석하고, 일반적인 디자인 팁은 쓰지 마세요. reasoning·risks·유사 사례 reason은 모두 한국어로 작성하세요.`;
   }
 
   const userContent = img
@@ -190,13 +198,16 @@ Note: A design image is attached. Use it only to relate this draft to patterns i
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         temperature: 0.35,
         messages: [
           {
             role: "system",
-            content:
-              "You output only valid JSON objects. No markdown fences. Field strings may be in Korean.",
+            content: [
+              "You output only valid JSON objects. No markdown fences.",
+              "Keys and prediction values stay as specified (e.g. Approved/Rejected, low/mid/high).",
+              "Every user-facing string (reasoning, each risks[] item, similar_cases[].reason) MUST be Korean only. No English in those fields.",
+            ].join(" "),
           },
           {
             role: "user",

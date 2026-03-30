@@ -72,21 +72,23 @@ export type CreativeOutput = {
   status: OutputStatus;
   reason: string;
   tags?: string[];
-  design_image_data_url?: string;
+  image_url: string | null;
   copy_text?: string;
   createdAt: string;
   deleted: boolean;
   deletedAt?: string;
   /** DB `feedbacks` AI 분석 컬럼 — 아카이브 상세 등에서 표시 */
-  ai_background?: string;
-  ai_typography?: string;
-  ai_copywriting?: string;
-  ai_layout?: string;
-  ai_key_visual?: string;
-  ai_summary?: string;
+  ai_background?: string | null;
+  ai_typography?: string | null;
+  ai_copywriting?: string | null;
+  ai_layout?: string | null;
+  ai_key_visual?: string | null;
+  ai_summary?: string | null;
 };
 
 export type AiSimilarPastCase = {
+  feedback_id?: string;
+  image_url?: string | null;
   description: string;
   result: OutputStatus;
   reason: string;
@@ -98,7 +100,7 @@ export type AiFeedbackHistoryEntry = {
   projectName: string;
   fileName: string;
   description: string;
-  design_image_data_url?: string;
+  image_url: string | null;
   summaryReason: string;
   aiExplanation?: string;
   status: OutputStatus;
@@ -149,8 +151,14 @@ type StoreApi = {
         | "reason"
         | "description"
         | "projectId"
-        | "design_image_data_url"
+        | "image_url"
         | "tags"
+        | "ai_background"
+        | "ai_typography"
+        | "ai_copywriting"
+        | "ai_layout"
+        | "ai_key_visual"
+        | "ai_summary"
       >
     >,
   ) => void;
@@ -175,16 +183,54 @@ function isStoredEntityId(id: string): boolean {
   );
 }
 
+/**
+ * `/api/ai/evaluate` 결과는 클라이언트에서만 prepend되고 DB에는 안 들어갈 수 있음.
+ * 로그인 동기화 시 서버 목록만 쓰면 새로고침 후 그 항목이 사라지므로, 같은 id가
+ * 서버에 없는 로컬 스토리지 항목은 유지한다.
+ */
+function mergeAiFeedbackHistoryWithServer(
+  fromServer: AiFeedbackHistoryEntry[],
+  fromLocal: AiFeedbackHistoryEntry[],
+): AiFeedbackHistoryEntry[] {
+  const serverIds = new Set(fromServer.map((h) => h.id));
+  const localOnly = fromLocal.filter((h) => !serverIds.has(h.id));
+  return [...fromServer, ...localOnly].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
+/** base64(data URL)는 localStorage에 넣지 않음 — http(s) 등만 유지 */
+function withoutDataUrlImages(s: StoreState): StoreState {
+  const clear = (url: string | null | undefined): string | null => {
+    if (url == null || url === "") return null;
+    return url.startsWith("data:") ? null : url;
+  };
+
+  return {
+    ...s,
+    outputs: s.outputs.map((o) => ({
+      ...o,
+      image_url: clear(o.image_url),
+    })),
+    aiFeedbackHistory: (s.aiFeedbackHistory ?? []).map((h) => ({
+      ...h,
+      image_url: clear(h.image_url),
+    })),
+    projectUpdatePending: {},
+  };
+}
+
+/** 용량 초과 시 이미지 필드 전부 제거 */
 function stripStoredImages(s: StoreState): StoreState {
   return {
     ...s,
     outputs: s.outputs.map((o) => ({
       ...o,
-      design_image_data_url: undefined,
+      image_url: null,
     })),
     aiFeedbackHistory: (s.aiFeedbackHistory ?? []).map((h) => ({
       ...h,
-      design_image_data_url: undefined,
+      image_url: null,
     })),
     projectUpdatePending: {},
   };
@@ -282,16 +328,59 @@ function normalizeLoadedState(parsed: StoreState): StoreState {
         }))
     : [];
 
+  const clearDataUrl = (url: string | null | undefined): string | null => {
+    if (url == null || url === "") return null;
+    return url.startsWith("data:") ? null : url;
+  };
+
   const outputs = Array.isArray(parsed.outputs)
-    ? parsed.outputs.filter(
-        (o) => isStoredEntityId(o.id) && isStoredEntityId(o.projectId),
-      )
+    ? parsed.outputs
+        .filter(
+          (o) => isStoredEntityId(o.id) && isStoredEntityId(o.projectId),
+        )
+        .map((o) => {
+          const ox = o as CreativeOutput & {
+            design_image_data_url?: string | null;
+          };
+          const merged =
+            (ox.image_url != null && String(ox.image_url).trim() !== ""
+              ? String(ox.image_url).trim()
+              : null) ??
+            (ox.design_image_data_url != null &&
+            String(ox.design_image_data_url).trim() !== ""
+              ? String(ox.design_image_data_url).trim()
+              : null);
+          const { design_image_data_url: _omitImg, ...rest } = ox;
+          return {
+            ...rest,
+            image_url: clearDataUrl(merged),
+          } as CreativeOutput;
+        })
     : [];
 
   const aiFeedbackHistory = Array.isArray(parsed.aiFeedbackHistory)
-    ? parsed.aiFeedbackHistory.filter(
-        (h) => isStoredEntityId(h.id) && isStoredEntityId(h.projectId),
-      )
+    ? parsed.aiFeedbackHistory
+        .filter(
+          (h) => isStoredEntityId(h.id) && isStoredEntityId(h.projectId),
+        )
+        .map((h) => {
+          const hx = h as AiFeedbackHistoryEntry & {
+            design_image_data_url?: string | null;
+          };
+          const merged =
+            (hx.image_url != null && String(hx.image_url).trim() !== ""
+              ? String(hx.image_url).trim()
+              : null) ??
+            (hx.design_image_data_url != null &&
+            String(hx.design_image_data_url).trim() !== ""
+              ? String(hx.design_image_data_url).trim()
+              : null);
+          const { design_image_data_url: _omitImg, ...rest } = hx;
+          return {
+            ...rest,
+            image_url: clearDataUrl(merged),
+          } as AiFeedbackHistoryEntry;
+        })
     : [];
 
   return {
@@ -324,6 +413,11 @@ export function useStore() {
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<StoreState>(DEFAULT_STATE);
   const [storageReady, setStorageReady] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -332,29 +426,42 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = safeParse(localStorage.getItem(STORAGE_KEY));
       const base = existing ? normalizeLoadedState(existing) : DEFAULT_STATE;
 
+      setState(base);
+
       const rows = await selectProjectsForCurrentUser();
 
       if (cancelled) return;
 
       if (rows === null) {
-        setState(base);
-      } else {
-        const projects = rows
-          .map((r) => mapSupabaseProjectRow(r))
-          .filter((p): p is Project => p !== null);
-        const pids = projects.map((p) => p.id);
-        const fbRaw = await selectFeedbacksForProjectIds(pids);
-        const outputs = fbRaw.map(mapFeedbackRow);
-        const aiRaw = await selectAiFeedbacksForProjectIds(pids);
-        const aiFeedbackHistory = aiRaw.map(mapAiFeedbackRow);
-        setState({
-          ...base,
-          projects,
-          outputs,
-          aiFeedbackHistory,
-          projectUpdatePending: {},
-        });
+        setStorageReady(true);
+        return;
       }
+
+      const projects = rows
+        .map((r) => mapSupabaseProjectRow(r))
+        .filter((p): p is Project => p !== null);
+      const pids = projects.map((p) => p.id);
+
+      const [fbRaw, aiRaw] = await Promise.all([
+        selectFeedbacksForProjectIds(pids),
+        selectAiFeedbacksForProjectIds(pids),
+      ]);
+
+      if (cancelled) return;
+
+      const outputs = fbRaw.map(mapFeedbackRow);
+      const aiFromServer = aiRaw.map(mapAiFeedbackRow);
+      const aiFeedbackHistory = mergeAiFeedbackHistoryWithServer(
+        aiFromServer,
+        base.aiFeedbackHistory ?? [],
+      );
+      setState({
+        ...base,
+        projects,
+        outputs,
+        aiFeedbackHistory,
+        projectUpdatePending: {},
+      });
       setStorageReady(true);
     };
 
@@ -375,13 +482,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!storageReady) return;
 
-    if (tryPersistToLocalStorage(state)) return;
+    const forStorage = withoutDataUrlImages(state);
+    if (tryPersistToLocalStorage(forStorage)) return;
 
     console.warn(
-      "[splice] localStorage 용량 한도 초과로 저장에 실패했습니다. 이미지 미리보기(data URL)를 빼고 다시 시도합니다.",
+      "[splice] localStorage 용량 한도 초과로 저장에 실패했습니다. 이미지 URL을 모두 제거한 뒤 다시 시도합니다.",
     );
 
-    const withoutImages = stripStoredImages(state);
+    const withoutImages = stripStoredImages(forStorage);
     if (tryPersistToLocalStorage(withoutImages)) {
       setState(withoutImages);
       return;
@@ -596,7 +704,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             tags: input.tags,
             copy_text: input.copy_text,
           }),
-          image_url: input.design_image_data_url ?? "",
+          image_url: input.image_url ?? "",
         });
         if (!res.ok) {
           throw new Error(res.message ?? "피드백 저장에 실패했습니다.");
@@ -611,24 +719,46 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       },
       updateOutput: (outputId, patch) => {
         setState((prev) => {
+          const prevOut = prev.outputs.find((x) => x.id === outputId);
+          if (!prevOut) return prev;
+
+          const merged: CreativeOutput = { ...prevOut, ...patch };
+          const statusChanged = prevOut.status !== merged.status;
+          const reasonChanged = prevOut.reason !== merged.reason;
+          const next: CreativeOutput =
+            statusChanged || reasonChanged
+              ? {
+                  ...merged,
+                  ai_background: null,
+                  ai_typography: null,
+                  ai_copywriting: null,
+                  ai_layout: null,
+                  ai_key_visual: null,
+                  ai_summary: null,
+                }
+              : merged;
+
           const outputs = prev.outputs.map((o) =>
-            o.id !== outputId ? o : { ...o, ...patch },
+            o.id === outputId ? next : o,
           );
-          const o = outputs.find((x) => x.id === outputId);
-          if (o) {
-            void updateFeedbackRow(o.id, {
-              project_id: o.projectId,
-              content: encodeFeedbackContent({
-                output_type: o.output_type,
-                status: o.status,
-                reason: o.reason,
-                description: o.description,
-                tags: o.tags,
-                copy_text: o.copy_text,
-              }),
-              image_url: o.design_image_data_url ?? "",
-            });
-          }
+          void updateFeedbackRow(next.id, {
+            project_id: next.projectId,
+            content: encodeFeedbackContent({
+              output_type: next.output_type,
+              status: next.status,
+              reason: next.reason,
+              description: next.description,
+              tags: next.tags,
+              copy_text: next.copy_text,
+            }),
+            image_url: next.image_url ?? "",
+            ai_background: next.ai_background ?? null,
+            ai_typography: next.ai_typography ?? null,
+            ai_copywriting: next.ai_copywriting ?? null,
+            ai_layout: next.ai_layout ?? null,
+            ai_key_visual: next.ai_key_visual ?? null,
+            ai_summary: next.ai_summary ?? null,
+          });
           return { ...prev, outputs };
         });
       },
@@ -732,7 +862,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         const fbIns = await insertFeedbackRow({
           project_id: input.projectId,
           content: parentContent,
-          image_url: input.design_image_data_url ?? "",
+          image_url: input.image_url ?? "",
         });
         if (!fbIns.ok) {
           console.error("[ai_feedbacks] 부모 feedback 저장 실패:", fbIns.message);
@@ -755,7 +885,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           project_id: input.projectId,
           user_id: authUser.id,
           content: aiContent,
-          image_url: input.design_image_data_url ?? "",
+          image_url: input.image_url ?? "",
         });
 
         const newOutput = mapFeedbackRow(parentRow);
@@ -766,7 +896,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             project_id: input.projectId,
             content: aiContent,
             created_at: now,
-            image_url: input.design_image_data_url ?? "",
+            image_url: input.image_url ?? "",
           });
           setState((prev) => ({
             ...prev,
@@ -782,6 +912,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       },
     };
   }, [state]);
+
+  if (!hydrated) {
+    return null;
+  }
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>;
 }

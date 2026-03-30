@@ -89,7 +89,7 @@ export async function requestDesignFeedbackFromOpenAI(input: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       max_tokens: 1200,
       messages: [
         { role: "system", content: SYSTEM },
